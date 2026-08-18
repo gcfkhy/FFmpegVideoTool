@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QAbstractItemView, QStatusBar, QScrollArea
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtGui import QFont, QPalette, QColor, QIcon
 
 from config import Config
 from ffmpeg_core import FFmpegWrapper, FileSorter, FFmpegWorker
@@ -1216,6 +1216,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("视频工具箱 · FFmpeg Video Tool")
         self.setMinimumSize(780, 680)
         self.resize(880, 760)
+
+        # 设置窗口图标
+        icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.jpg")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)

@@ -4,6 +4,9 @@ dist/
 *.spec
 pip_tmp/
 
+# 图标构建产物（由 assets/icon.jpg 生成）
+assets/icon.ico
+
 # Python 缓存
 __pycache__/
 *.py[cod]
