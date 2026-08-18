@@ -1,0 +1,16 @@
+# 构建产物
+build/
+dist/
+*.spec
+pip_tmp/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 工具/编辑器
+.vscode/
+.idea/
+
+# 日志
+*.log
