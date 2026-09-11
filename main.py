@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QGridLayout, QPushButton, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QProgressBar,
     QPlainTextEdit, QGroupBox, QFileDialog, QMessageBox, QAbstractItemView,
-    QStatusBar, QScrollArea, QStackedWidget
+    QStatusBar, QScrollArea, QStackedWidget, QGraphicsDropShadowEffect
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QPalette, QColor, QIcon
@@ -101,7 +101,7 @@ QTabBar {
 QTabBar::tab {
     background-color: transparent;
     color: #64748b;
-    padding: 10px 28px;
+    padding: 11px 30px;
     border: none;
     border-radius: 10px;
     margin-right: 4px;
@@ -110,7 +110,7 @@ QTabBar::tab {
 QTabBar::tab:selected {
     background-color: #ffffff;
     color: #4f46e5;
-    font-weight: 600;
+    font-weight: 700;
     border: 1px solid #cbd5e1;
 }
 QTabBar::tab:hover:!selected {
@@ -205,9 +205,13 @@ QLineEdit, QSpinBox, QComboBox {
     color: #1e293b;
     selection-background-color: #a5b4fc;
 }
+QLineEdit:hover, QSpinBox:hover, QComboBox:hover {
+    border-color: #94a3b8;
+}
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-    border-color: #6366f1;
-    background-color: #ffffff;
+    border: 2px solid #6366f1;
+    padding: 0px 13px;
+    background-color: #fbfbff;
 }
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
     color: #94a3b8;
@@ -219,6 +223,11 @@ QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
 QComboBox::drop-down {
     border: none;
     width: 32px;
+}
+QComboBox::drop-down:hover {
+    background-color: rgba(99, 102, 241, 0.08);
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
 }
 QComboBox::down-arrow {
     image: url("__ICON_DOWN__");
@@ -258,6 +267,10 @@ QSpinBox::up-button, QSpinBox::down-button {
     border: none;
     width: 24px;
     height: 18px;
+    border-radius: 6px;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background-color: rgba(99, 102, 241, 0.12);
 }
 QSpinBox::up-button {
     subcontrol-origin: border;
@@ -324,7 +337,7 @@ QGroupBox::title {
     top: 12px;
     left: 14px;
     background-color: transparent;
-    color: #475569;
+    color: #334155;
     font-size: 15px;
     font-weight: 700;
 }
@@ -360,7 +373,12 @@ QCheckBox::indicator:checked {
     image: url("__ICON_CHECK__");
 }
 QCheckBox::indicator:hover {
-    border-color: #94a3b8;
+    border-color: #6366f1;
+    background-color: #eef2ff;
+}
+QCheckBox::indicator:checked:hover {
+    background-color: #4338ca;
+    border-color: #4338ca;
 }
 
 /* === 标签状态色 === */
@@ -1849,6 +1867,16 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.pdf_tab, "📄 PDF 工具")
         tabs.addTab(self.settings_tab, "⚙ 设置")
         self.setCentralWidget(tabs)
+
+        # 卡片柔和投影，增强层次感
+        for _tab in (self.merge_tab, self.compress_tab, self.watermark_tab,
+                     self.pdf_tab, self.settings_tab):
+            for _card in _tab.findChildren(QGroupBox):
+                _eff = QGraphicsDropShadowEffect()
+                _eff.setBlurRadius(28)
+                _eff.setOffset(0, 6)
+                _eff.setColor(QColor(15, 23, 42, 26))
+                _card.setGraphicsEffect(_eff)
 
         ff_path = self.config.get("ffmpeg_path", "")
         if not ff_path or not os.path.exists(ff_path):
