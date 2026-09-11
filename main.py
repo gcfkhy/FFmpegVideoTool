@@ -85,6 +85,7 @@ QWidget {
     color: #1e293b;
     font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
     font-size: 14px;
+    background-color: transparent;
 }
 /* === Tab 导航 === */
 QTabWidget::pane {
@@ -463,6 +464,14 @@ QMenu::item {
 QMenu::item:selected {
     background-color: #e0e7ff;
     color: #4f46e5;
+}
+
+/* 模式切换容器透明，避免卡片内出现灰色块 */
+QStackedWidget {
+    background: transparent;
+}
+QStackedWidget > QWidget > QWidget {
+    background: transparent;
 }
 """
 
@@ -1912,8 +1921,13 @@ def main():
     pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
     pal.setColor(QPalette.PlaceholderText, QColor("#94a3b8"))
     app.setPalette(pal)
+    # qt-material 基础层在前，完整组件样式在后（QSS 后者覆盖前者），风格统一
+    from qt_material import build_stylesheet
+    _base = getattr(sys, "_MEIPASS", None) or os.path.dirname(
+        os.path.abspath(__file__))
+    _theme = os.path.join(_base, "assets", "material_indigo.xml")
     icons = _gen_ui_icons()
-    style = STYLE_SHEET
+    style = build_stylesheet(_theme) + "\n" + STYLE_SHEET
     for key, path in icons.items():
         style = style.replace(key, path)
     app.setStyleSheet(style)
