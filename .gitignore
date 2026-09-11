@@ -17,3 +17,6 @@ __pycache__/
 
 # 日志
 *.log
+# 内置大文件（ffmpeg 超过 GitHub 100MB 限制；msyh.ttc 为微软版权字体）
+ffmpeg_bin/
+msyh.ttc

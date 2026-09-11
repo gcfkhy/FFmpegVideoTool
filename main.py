@@ -1,28 +1,78 @@
 import sys
 import os
+import tempfile
 
 # 必须在导入 PyQt5 之前设置
 os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
 os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
 
+from functools import partial
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QComboBox, QSpinBox, QCheckBox, QProgressBar, QPlainTextEdit, QGroupBox,
-    QFileDialog, QMessageBox, QAbstractItemView, QStatusBar, QScrollArea
+    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QProgressBar,
+    QPlainTextEdit, QGroupBox, QFileDialog, QMessageBox, QAbstractItemView,
+    QStatusBar, QScrollArea, QStackedWidget
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QPalette, QColor, QIcon
 
 from config import Config
 from ffmpeg_core import FFmpegWrapper, FileSorter, FFmpegWorker
+from pdf_tools import (PdfWorker, DOC_EXTS, PDF_EXTS, font_path,
+                       collect_files, word_to_pdf, set_pdf_permissions,
+                       add_text_watermark, convert_to_image_pdf)
+from video_watermark import (VideoWatermarkWorker, collect_videos,
+                             probe_video, is_marked, build_command,
+                             suggest_output)
 
 
 def _fix_input_heights(widget):
     """QSS 的 min-height 不参与布局计算，会导致控件重叠，
     这里统一用固定高度，保证行距正常。"""
-    for w in widget.findChildren((QLineEdit, QComboBox, QSpinBox)):
+    for w in widget.findChildren((QLineEdit, QComboBox, QSpinBox,
+                                  QDoubleSpinBox)):
         w.setFixedHeight(40)
+
+
+# ==================== UI 小图标生成 ====================
+def _gen_ui_icons():
+    """生成 QSS 使用的箭头/对勾 PNG 图标，返回占位符到路径的映射。
+
+    Qt QSS 的 CSS 边框三角技巧会渲染成实心矩形，因此改用图片文件。
+    """
+    from PIL import Image, ImageDraw
+
+    d = os.path.join(tempfile.gettempdir(), "VideoTool_ui")
+    os.makedirs(d, exist_ok=True)
+    gray = (100, 116, 139, 255)   # #64748b
+    focus = (79, 70, 229, 255)    # #4f46e5
+    white = (255, 255, 255, 255)
+
+    def _save(name, size, draw_fn):
+        img = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw_fn(ImageDraw.Draw(img))
+        path = os.path.join(d, name)
+        img.save(path)
+        return path.replace("\\", "/")
+
+    icons = {
+        "__ICON_DOWN__": _save(
+            "arrow_down.png", (12, 8),
+            lambda dr: dr.polygon([(0, 0), (12, 0), (6, 8)], fill=gray)),
+        "__ICON_DOWN_FOCUS__": _save(
+            "arrow_down_focus.png", (12, 8),
+            lambda dr: dr.polygon([(0, 0), (12, 0), (6, 8)], fill=focus)),
+        "__ICON_UP__": _save(
+            "arrow_up.png", (12, 8),
+            lambda dr: dr.polygon([(0, 8), (12, 8), (6, 0)], fill=gray)),
+        "__ICON_CHECK__": _save(
+            "check.png", (14, 12),
+            lambda dr: dr.line([(2, 6), (5, 9), (12, 2)],
+                               fill=white, width=2)),
+    }
+    return icons
 
 
 # ==================== 现代浅色主题 ====================
@@ -171,14 +221,9 @@ QComboBox::drop-down {
     width: 32px;
 }
 QComboBox::down-arrow {
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #64748b;
-}
-QComboBox:focus::down-arrow {
-    border-top-color: #4f46e5;
+    image: url("__ICON_DOWN__");
+    width: 12px;
+    height: 8px;
 }
 QComboBox QAbstractItemView {
     background-color: #ffffff;
@@ -223,18 +268,14 @@ QSpinBox::down-button {
     subcontrol-position: bottom right;
 }
 QSpinBox::up-arrow {
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid #64748b;
+    image: url("__ICON_UP__");
+    width: 12px;
+    height: 8px;
 }
 QSpinBox::down-arrow {
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #64748b;
+    image: url("__ICON_DOWN__");
+    width: 12px;
+    height: 8px;
 }
 
 /* === 进度条 === */
@@ -316,6 +357,7 @@ QCheckBox::indicator {
 QCheckBox::indicator:checked {
     background-color: #4f46e5;
     border-color: #4f46e5;
+    image: url("__ICON_CHECK__");
 }
 QCheckBox::indicator:hover {
     border-color: #94a3b8;
@@ -681,7 +723,7 @@ class MergeTab(QWidget):
             return
         ff = self._get_ff()
         if not ff.ffprobe or not os.path.exists(ff.ffprobe):
-            self.lbl_status.setText("⚠ 未配置 FFprobe 路径，无法检查编码")
+            self.lbl_status.setText("⚠ 未找到 FFprobe，无法检查编码")
             self.lbl_status.setObjectName("warning")
         else:
             ok, msg, _ = ff.check_compatibility(paths)
@@ -713,7 +755,7 @@ class MergeTab(QWidget):
             return
         ff_path = self.config.get("ffmpeg_path", "")
         if not ff_path or not os.path.exists(ff_path):
-            QMessageBox.warning(self, "提示", "请在设置中配置 FFmpeg 路径")
+            QMessageBox.warning(self, "提示", "未找到可用的 FFmpeg")
             return
 
         ff = self._get_ff()
@@ -794,7 +836,7 @@ class CompressTab(QWidget):
         # 文件选择
         file_group = QGroupBox("📁 文件")
         file_layout = QGridLayout(file_group)
-        file_layout.setContentsMargins(16, 4, 16, 16)
+        file_layout.setContentsMargins(0, 0, 0, 0)
         file_layout.setHorizontalSpacing(12)
         file_layout.setVerticalSpacing(12)
         file_layout.addWidget(QLabel("源文件:"), 0, 0)
@@ -815,7 +857,7 @@ class CompressTab(QWidget):
         # 压缩设置
         settings_group = QGroupBox("⚙ 压缩设置")
         s_layout = QGridLayout(settings_group)
-        s_layout.setContentsMargins(16, 4, 16, 16)
+        s_layout.setContentsMargins(0, 0, 0, 0)
         s_layout.setHorizontalSpacing(12)
         s_layout.setVerticalSpacing(12)
         s_layout.addWidget(QLabel("输出格式:"), 0, 0)
@@ -860,7 +902,7 @@ class CompressTab(QWidget):
         # 文件信息
         info_group = QGroupBox("ℹ 文件信息")
         info_layout = QVBoxLayout(info_group)
-        info_layout.setContentsMargins(16, 4, 16, 16)
+        info_layout.setContentsMargins(0, 0, 0, 0)
         self.lbl_info = QLabel("请选择源文件")
         self.lbl_info.setObjectName("info")
         info_layout.addWidget(self.lbl_info)
@@ -957,7 +999,7 @@ class CompressTab(QWidget):
             self.lbl_info.setObjectName("info")
         else:
             self.file_info = None
-            self.lbl_info.setText("无法读取文件信息，请检查 FFprobe 路径")
+            self.lbl_info.setText("无法读取文件信息")
             self.lbl_info.setObjectName("warning")
         self.style().unpolish(self.lbl_info)
         self.style().polish(self.lbl_info)
@@ -1016,13 +1058,13 @@ class CompressTab(QWidget):
             self.txt_output.setText(output)
         ff_path = self.config.get("ffmpeg_path", "")
         if not ff_path or not os.path.exists(ff_path):
-            QMessageBox.warning(self, "提示", "请在设置中配置 FFmpeg 路径")
+            QMessageBox.warning(self, "提示", "未找到可用的 FFmpeg")
             return
 
         if not self.file_info:
             self._probe_file(input_path)
         if not self.file_info or self.file_info["duration"] <= 0:
-            QMessageBox.warning(self, "提示", "无法读取文件信息，请检查 FFprobe 路径")
+            QMessageBox.warning(self, "提示", "无法读取文件信息")
             return
 
         target_mb = self._get_target_size_mb()
@@ -1085,6 +1127,610 @@ class CompressTab(QWidget):
             QMessageBox.warning(self, "失败", f"压缩失败\n{msg}")
 
 
+# ==================== PDF 工具页签 ====================
+class PdfTab(QWidget):
+    MODE_WORD, MODE_PERM, MODE_WM, MODE_IMG = range(4)
+
+    def __init__(self, config, status_bar, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.status_bar = status_bar
+        self.worker = None
+        self._init_ui()
+
+    def _init_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("pageContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        # 输入输出
+        io_group = QGroupBox("📁 输入 / 输出")
+        g = QGridLayout(io_group)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(12)
+        g.setVerticalSpacing(12)
+        g.addWidget(QLabel("源路径:"), 0, 0)
+        self.txt_input = DropLineEdit()
+        self.txt_input.setPlaceholderText("可拖入文件或文件夹，文件夹将递归处理")
+        self.btn_browse_dir = QPushButton("选目录...")
+        self.btn_browse_file = QPushButton("选文件...")
+        g.addWidget(self.txt_input, 0, 1)
+        g.addWidget(self.btn_browse_dir, 0, 2)
+        g.addWidget(self.btn_browse_file, 0, 3)
+        g.addWidget(QLabel("输出目录:"), 1, 0)
+        self.txt_output = QLineEdit()
+        self.btn_browse_out = QPushButton("浏览...")
+        g.addWidget(self.txt_output, 1, 1)
+        g.addWidget(self.btn_browse_out, 1, 2)
+        self.lbl_out_hint = QLabel("")
+        self.lbl_out_hint.setObjectName("info")
+        self.lbl_out_hint.setWordWrap(True)
+        g.addWidget(self.lbl_out_hint, 2, 1, 1, 3)
+        g.setColumnStretch(1, 1)
+        layout.addWidget(io_group)
+
+        # 模式与参数
+        mode_group = QGroupBox("⚙ 处理模式")
+        mv = QVBoxLayout(mode_group)
+        mv.setContentsMargins(0, 0, 0, 0)
+        mv.setSpacing(12)
+        self.cmb_mode = QComboBox()
+        self.cmb_mode.addItems(["📝 Word 转 PDF", "🔒 PDF 权限限制",
+                                 "💧 PDF 文字水印", "🖼 PDF 转图片并加水印"])
+        mv.addWidget(self.cmb_mode)
+        self.stack = QStackedWidget()
+        mv.addWidget(self.stack)
+        self.stack.addWidget(self._build_word_page())
+        self.stack.addWidget(self._build_perm_page())
+        self.stack.addWidget(self._build_wm_page())
+        self.stack.addWidget(self._build_img_page())
+        layout.addWidget(mode_group)
+
+        # 开始按钮 + 取消按钮
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        self.btn_start = QPushButton("▶ 开始处理")
+        self.btn_start.setObjectName("primary")
+        self.btn_start.setMinimumHeight(44)
+        self.btn_cancel = QPushButton("✖ 取消")
+        self.btn_cancel.setObjectName("cancel")
+        self.btn_cancel.setMinimumHeight(44)
+        self.btn_cancel.setVisible(False)
+        btn_row.addWidget(self.btn_start, 1)
+        btn_row.addWidget(self.btn_cancel)
+        layout.addLayout(btn_row)
+
+        # 进度与日志
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
+        self.log = QPlainTextEdit()
+        self.log.setMaximumHeight(160)
+        self.log.setReadOnly(True)
+        layout.addWidget(self.log)
+
+        # 信号
+        self.btn_browse_dir.clicked.connect(self._browse_dir)
+        self.btn_browse_file.clicked.connect(self._browse_file)
+        self.btn_browse_out.clicked.connect(self._browse_out)
+        self.btn_start.clicked.connect(self._start)
+        self.btn_cancel.clicked.connect(self._cancel)
+        self.cmb_mode.currentIndexChanged.connect(self._on_mode_changed)
+        self.txt_input.file_dropped.connect(
+            lambda p: self.txt_input.setText(p))
+        self._on_mode_changed(0)
+        _fix_input_heights(content)
+
+        # 内容装入滚动区域，窗口不够高时可滚动，避免卡片被挤压导致控件重叠
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+    def _build_word_page(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        hint = QLabel("需要本机安装 Microsoft Word；自动接受修订并删除批注，"
+                      "原 Word 文件不会被修改。输出目录留空时输出到源目录旁的 *_PDF 文件夹")
+        hint.setObjectName("info")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+        v.addStretch()
+        return page
+
+    def _build_perm_page(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        row.addWidget(QLabel("权限密码:"))
+        self.txt_password = QLineEdit()
+        self.txt_password.setText("37259F97D4BC8CC4412B1E484E0A4F96")
+        row.addWidget(self.txt_password, 1)
+
+        v.addLayout(row)
+        perms_row = QHBoxLayout()
+        perms_row.setSpacing(16)
+        perms_row.addWidget(QLabel("允许操作:"))
+        self.chk_perm_print = QCheckBox("打印")
+        self.chk_perm_copy = QCheckBox("复制内容")
+        self.chk_perm_modify = QCheckBox("修改文档")
+        self.chk_perm_annot = QCheckBox("批注/表单")
+        for c in (self.chk_perm_print, self.chk_perm_copy,
+                  self.chk_perm_modify, self.chk_perm_annot):
+            perms_row.addWidget(c)
+        perms_row.addStretch()
+        v.addLayout(perms_row)
+        hint = QLabel("未勾选的操作将被禁止，打开 PDF 始终无需密码；"
+                      "输出目录留空时将覆盖原文件，建议先备份")
+        hint.setObjectName("info")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+        v.addStretch()
+        return page
+
+    def _build_wm_page(self):
+        page = QWidget()
+        g = QGridLayout(page)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(12)
+        g.setVerticalSpacing(12)
+        g.addWidget(QLabel("水印文字:"), 0, 0)
+        self.txt_wm_text = QLineEdit("杭州喜马拉雅")
+        g.addWidget(self.txt_wm_text, 0, 1)
+        g.addWidget(QLabel("字号:"), 0, 2)
+        self.spn_wm_size = QSpinBox()
+        self.spn_wm_size.setRange(6, 120)
+        self.spn_wm_size.setValue(18)
+        g.addWidget(self.spn_wm_size, 0, 3)
+        g.addWidget(QLabel("行数:"), 1, 0)
+        self.spn_wm_rows = QSpinBox()
+        self.spn_wm_rows.setRange(1, 20)
+        self.spn_wm_rows.setValue(5)
+        g.addWidget(self.spn_wm_rows, 1, 1)
+        g.addWidget(QLabel("列数:"), 1, 2)
+        self.spn_wm_cols = QSpinBox()
+        self.spn_wm_cols.setRange(1, 20)
+        self.spn_wm_cols.setValue(3)
+        g.addWidget(self.spn_wm_cols, 1, 3)
+        g.addWidget(QLabel("角度:"), 2, 0)
+        self.spn_wm_angle = QSpinBox()
+        self.spn_wm_angle.setRange(0, 90)
+        self.spn_wm_angle.setValue(35)
+        g.addWidget(self.spn_wm_angle, 2, 1)
+        g.addWidget(QLabel("透明度(%):"), 2, 2)
+        self.spn_wm_alpha = QSpinBox()
+        self.spn_wm_alpha.setRange(5, 100)
+        self.spn_wm_alpha.setValue(20)
+        g.addWidget(self.spn_wm_alpha, 2, 3)
+        hint = QLabel("文字保留可选中，文件体积几乎不变；"
+                      "输出目录留空时将覆盖原文件，建议先备份")
+        hint.setObjectName("info")
+        hint.setWordWrap(True)
+        g.addWidget(hint, 3, 0, 1, 4)
+        g.setColumnStretch(1, 1)
+        return page
+
+    def _build_img_page(self):
+        page = QWidget()
+        g = QGridLayout(page)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(12)
+        g.setVerticalSpacing(12)
+        g.addWidget(QLabel("水印文字:"), 0, 0)
+        self.txt_img_text = QLineEdit("杭州喜马拉雅")
+        g.addWidget(self.txt_img_text, 0, 1)
+        g.addWidget(QLabel("字号:"), 0, 2)
+        self.spn_img_size = QSpinBox()
+        self.spn_img_size.setRange(6, 200)
+        self.spn_img_size.setValue(36)
+        g.addWidget(self.spn_img_size, 0, 3)
+        g.addWidget(QLabel("行数:"), 1, 0)
+        self.spn_img_rows = QSpinBox()
+        self.spn_img_rows.setRange(1, 20)
+        self.spn_img_rows.setValue(5)
+        g.addWidget(self.spn_img_rows, 1, 1)
+        g.addWidget(QLabel("列数:"), 1, 2)
+        self.spn_img_cols = QSpinBox()
+        self.spn_img_cols.setRange(1, 20)
+        self.spn_img_cols.setValue(2)
+        g.addWidget(self.spn_img_cols, 1, 3)
+        g.addWidget(QLabel("角度:"), 2, 0)
+        self.spn_img_angle = QSpinBox()
+        self.spn_img_angle.setRange(0, 90)
+        self.spn_img_angle.setValue(35)
+        g.addWidget(self.spn_img_angle, 2, 1)
+        g.addWidget(QLabel("透明度(%):"), 2, 2)
+        self.spn_img_alpha = QSpinBox()
+        self.spn_img_alpha.setRange(5, 100)
+        self.spn_img_alpha.setValue(30)
+        g.addWidget(self.spn_img_alpha, 2, 3)
+        g.addWidget(QLabel("清晰度:"), 3, 0)
+        self.spn_img_quality = QSpinBox()
+        self.spn_img_quality.setRange(10, 100)
+        self.spn_img_quality.setValue(85)
+        g.addWidget(self.spn_img_quality, 3, 1)
+        g.addWidget(QLabel("渲染倍率:"), 3, 2)
+        self.spn_img_zoom = QDoubleSpinBox()
+        self.spn_img_zoom.setRange(1.0, 4.0)
+        self.spn_img_zoom.setSingleStep(0.1)
+        self.spn_img_zoom.setValue(1.5)
+        g.addWidget(self.spn_img_zoom, 3, 3)
+        hint = QLabel("每页转为图片后加水印，文字无法选中提取，防止二次编辑；"
+                      "输出目录留空时将覆盖原文件，建议先备份")
+        hint.setObjectName("info")
+        hint.setWordWrap(True)
+        g.addWidget(hint, 4, 0, 1, 4)
+        g.setColumnStretch(1, 1)
+        return page
+
+    def _on_mode_changed(self, idx):
+        self.stack.setCurrentIndex(idx)
+        hints = {
+            self.MODE_WORD: "输出目录留空时，输出到源目录旁的 *_PDF 文件夹",
+            self.MODE_PERM: "输出目录留空时，将覆盖原 PDF 文件",
+            self.MODE_WM: "输出目录留空时，将覆盖原 PDF 文件",
+            self.MODE_IMG: "输出目录留空时，将覆盖原 PDF 文件",
+        }
+        self.lbl_out_hint.setText("ℹ " + hints.get(idx, ""))
+
+    def _browse_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择目录")
+        if d:
+            self.txt_input.setText(d)
+
+    def _browse_file(self):
+        last_dir = self.config.get("last_output_dir", "")
+        flt = ("Word 文件 (*.docx *.doc);;所有文件 (*)"
+               if self.cmb_mode.currentIndex() == self.MODE_WORD
+               else "PDF 文件 (*.pdf);;所有文件 (*)")
+        files, _ = QFileDialog.getOpenFileNames(self, "选择文件", last_dir, flt)
+        if files:
+            self.txt_input.setText(files[0])
+            self.config.set("last_output_dir", os.path.dirname(files[0]))
+
+    def _browse_out(self):
+        d = QFileDialog.getExistingDirectory(self, "选择输出目录")
+        if d:
+            self.txt_output.setText(d)
+
+    def _collect_inputs(self):
+        src = self.txt_input.text().strip()
+        if not src:
+            return []
+        return [src]
+
+    def _start(self):
+        mode = self.cmb_mode.currentIndex()
+        exts = DOC_EXTS if mode == self.MODE_WORD else PDF_EXTS
+        files = collect_files(self._collect_inputs(), exts)
+        if not files:
+            QMessageBox.warning(self, "提示", "未找到待处理的文件")
+            return
+        out_dir = self.txt_output.text().strip()
+
+        if mode == self.MODE_WORD:
+            task = partial(word_to_pdf, files, out_dir)
+            label = "Word 转 PDF"
+        elif mode == self.MODE_PERM:
+            task = partial(set_pdf_permissions, files, out_dir,
+                           self.txt_password.text().strip(),
+                           allow_print=self.chk_perm_print.isChecked(),
+                           allow_copy=self.chk_perm_copy.isChecked(),
+                           allow_modify=self.chk_perm_modify.isChecked(),
+                           allow_annotate=self.chk_perm_annot.isChecked())
+            label = "PDF 权限设置"
+        elif mode == self.MODE_WM:
+            task = partial(
+                add_text_watermark, files, out_dir,
+                text=self.txt_wm_text.text().strip() or "水印",
+                font=font_path(), rows=self.spn_wm_rows.value(),
+                cols=self.spn_wm_cols.value(),
+                font_size=self.spn_wm_size.value(),
+                opacity=self.spn_wm_alpha.value() / 100,
+                angle=self.spn_wm_angle.value())
+            label = "PDF 文字水印"
+        else:
+            task = partial(
+                convert_to_image_pdf, files, out_dir,
+                text=self.txt_img_text.text().strip() or "水印",
+                font=font_path(), rows=self.spn_img_rows.value(),
+                cols=self.spn_img_cols.value(),
+                font_size=self.spn_img_size.value(),
+                opacity=self.spn_img_alpha.value() / 100,
+                angle=self.spn_img_angle.value(),
+                zoom=self.spn_img_zoom.value(),
+                quality=self.spn_img_quality.value())
+            label = "PDF 转图片并加水印"
+
+        self.worker = PdfWorker(task, label)
+        self.worker.progress.connect(self.progress.setValue)
+        self.worker.log.connect(self.log.appendPlainText)
+        self.worker.finished_signal.connect(self._on_finished)
+        self.btn_start.setEnabled(False)
+        self.btn_start.setText("处理中...")
+        self.btn_cancel.setVisible(True)
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+        self.log.clear()
+        self.log.appendPlainText(f"{label}，共 {len(files)} 个文件")
+        self.worker.start()
+
+    def _cancel(self):
+        if self.worker and self.worker.isRunning():
+            self.btn_cancel.setEnabled(False)
+            self.btn_cancel.setText("取消中...")
+            self.worker.cancel()
+
+    def _on_finished(self, success, msg):
+        self.btn_start.setEnabled(True)
+        self.btn_start.setText("▶ 开始处理")
+        self.btn_cancel.setVisible(False)
+        self.btn_cancel.setEnabled(True)
+        self.btn_cancel.setText("✖ 取消")
+        if success:
+            self.progress.setValue(100)
+            QMessageBox.information(self, "成功", msg)
+        else:
+            QMessageBox.warning(self, "失败", msg)
+
+
+# ==================== 视频水印页签 ====================
+class WatermarkTab(QWidget):
+    def __init__(self, config, status_bar, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.status_bar = status_bar
+        self.worker = None
+        self._init_ui()
+
+    def _init_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("pageContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        # 工具栏
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        self.btn_add = QPushButton("＋ 添加文件")
+        self.btn_add_dir = QPushButton("＋ 添加目录")
+        self.btn_remove = QPushButton("－ 删除选中")
+        self.btn_clear = QPushButton("× 清空")
+        for btn in (self.btn_add, self.btn_add_dir, self.btn_remove,
+                    self.btn_clear):
+            toolbar.addWidget(btn)
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
+        hint = QLabel("✦ 提示: 拖拽视频文件到列表可添加；已加水印的视频可自动跳过")
+        hint.setObjectName("info")
+        layout.addWidget(hint)
+
+        # 文件列表
+        self.file_list = FileListWidget()
+        self.file_list.setMinimumHeight(200)
+        layout.addWidget(self.file_list, 1)
+
+        # 参数
+        params = QGroupBox("💧 水印设置")
+        g = QGridLayout(params)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(12)
+        g.setVerticalSpacing(12)
+        g.addWidget(QLabel("水印文字:"), 0, 0)
+        self.txt_text = QLineEdit("杭州喜马拉雅")
+        g.addWidget(self.txt_text, 0, 1)
+        g.addWidget(QLabel("颜色:"), 0, 2)
+        self.txt_color = QLineEdit("#FF0000")
+        g.addWidget(self.txt_color, 0, 3)
+        g.addWidget(QLabel("字号:"), 1, 0)
+        self.spn_size = QSpinBox()
+        self.spn_size.setRange(8, 200)
+        self.spn_size.setValue(40)
+        g.addWidget(self.spn_size, 1, 1)
+        g.addWidget(QLabel("透明度(%):"), 1, 2)
+        self.spn_alpha = QSpinBox()
+        self.spn_alpha.setRange(5, 100)
+        self.spn_alpha.setValue(30)
+        g.addWidget(self.spn_alpha, 1, 3)
+        g.addWidget(QLabel("出现频率:"), 2, 0)
+        self.spn_freq = QSpinBox()
+        self.spn_freq.setRange(1, 30)
+        self.spn_freq.setValue(7)
+        g.addWidget(self.spn_freq, 2, 1)
+        g.addWidget(QLabel("视频码率:"), 2, 2)
+        self.spn_bitrate = QSpinBox()
+        self.spn_bitrate.setRange(500, 50000)
+        self.spn_bitrate.setValue(2000)
+        self.spn_bitrate.setSuffix(" kbps")
+        g.addWidget(self.spn_bitrate, 2, 3)
+        self.chk_skip = QCheckBox("跳过已加水印的视频（按元数据标记识别）")
+        self.chk_skip.setChecked(True)
+        g.addWidget(self.chk_skip, 3, 0, 1, 2)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(QLabel("输出方式:"))
+        self.cmb_output = QComboBox()
+        self.cmb_output.addItems(["替换原文件", "另存为新文件"])
+        row.addWidget(self.cmb_output)
+        row.addStretch()
+        g.addLayout(row, 3, 2, 1, 2)
+        g.setColumnStretch(1, 1)
+        layout.addWidget(params)
+
+        # 开始按钮 + 取消按钮
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        self.btn_start = QPushButton("▶ 开始加水印")
+        self.btn_start.setObjectName("primary")
+        self.btn_start.setMinimumHeight(44)
+        self.btn_cancel = QPushButton("✖ 取消")
+        self.btn_cancel.setObjectName("cancel")
+        self.btn_cancel.setMinimumHeight(44)
+        self.btn_cancel.setVisible(False)
+        btn_row.addWidget(self.btn_start, 1)
+        btn_row.addWidget(self.btn_cancel)
+        layout.addLayout(btn_row)
+
+        # 进度与日志
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
+        self.log = QPlainTextEdit()
+        self.log.setMaximumHeight(160)
+        self.log.setReadOnly(True)
+        layout.addWidget(self.log)
+
+        # 信号
+        self.btn_add.clicked.connect(self._add_files)
+        self.btn_add_dir.clicked.connect(self._add_dir)
+        self.btn_remove.clicked.connect(self._remove_selected)
+        self.btn_clear.clicked.connect(self.file_list.clear)
+        self.btn_start.clicked.connect(self._start)
+        self.btn_cancel.clicked.connect(self._cancel)
+        self.file_list.files_dropped.connect(self._add_paths)
+        _fix_input_heights(content)
+
+        # 内容装入滚动区域，窗口不够高时可滚动，避免卡片被挤压导致控件重叠
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+    def _add_files(self):
+        last_dir = self.config.get("last_output_dir", "")
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "选择视频文件", last_dir,
+            "视频文件 (*.mp4 *.mkv *.avi *.mov *.flv *.ts *.wmv);;所有文件 (*)")
+        if files:
+            self._add_paths(files)
+            self.config.set("last_output_dir", os.path.dirname(files[0]))
+
+    def _add_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择目录（递归扫描视频）")
+        if d:
+            self._add_paths([d])
+
+    def _add_paths(self, paths):
+        existing = {self.file_list.item(i).data(Qt.UserRole)
+                    for i in range(self.file_list.count())}
+        for f in collect_videos(paths):
+            if f in existing:
+                continue
+            item = QListWidgetItem(f"{os.path.basename(f)}")
+            item.setData(Qt.UserRole, f)
+            self.file_list.addItem(item)
+
+    def _remove_selected(self):
+        for item in reversed(self.file_list.selectedItems()):
+            self.file_list.takeItem(self.file_list.row(item))
+
+    def _start(self):
+        files = [self.file_list.item(i).data(Qt.UserRole)
+                 for i in range(self.file_list.count())]
+        if not files:
+            QMessageBox.warning(self, "提示", "请先添加视频文件")
+            return
+        ffmpeg = self.config.get("ffmpeg_path", "")
+        ffprobe = self.config.get("ffprobe_path", "")
+        if not ffmpeg or not os.path.exists(ffmpeg):
+            QMessageBox.warning(self, "提示", "未找到可用的 FFmpeg")
+            return
+
+        as_new = self.cmb_output.currentIndex() == 1
+        jobs = []
+        skipped = 0
+        for f in files:
+            probe = probe_video(ffprobe, f)
+            if not probe:
+                self.log.appendPlainText(f"✗ 无法读取，跳过: {f}")
+                skipped += 1
+                continue
+            if self.chk_skip.isChecked() and is_marked(probe):
+                self.log.appendPlainText(f"– 已加水印，跳过: {f}")
+                skipped += 1
+                continue
+            temp = suggest_output(f, as_new)
+            cmd, dur = build_command(
+                ffmpeg, f, temp, font_path(), probe,
+                text=self.txt_text.text().strip() or "水印",
+                color=self.txt_color.text().strip() or "#FF0000",
+                fontsize=self.spn_size.value(),
+                alpha=self.spn_alpha.value() / 100,
+                frequency_factor=self.spn_freq.value(),
+                video_bitrate_k=self.spn_bitrate.value(),
+                codec=self.config.get("default_codec", "hevc_nvenc"),
+                use_nvenc=self.config.get("use_nvenc", True),
+            )
+            jobs.append((f, temp, not as_new, cmd, dur))
+
+        if not jobs:
+            QMessageBox.information(
+                self, "提示", "没有需要处理的文件"
+                + (f"（跳过 {skipped} 个）" if skipped else ""))
+            return
+
+        if not as_new:
+            ret = QMessageBox.question(
+                self, "确认",
+                f"将替换 {len(jobs)} 个原视频文件（不可恢复），是否继续？",
+                QMessageBox.Yes | QMessageBox.No)
+            if ret != QMessageBox.Yes:
+                return
+
+        self.worker = VideoWatermarkWorker(jobs)
+        self.worker.progress.connect(self.progress.setValue)
+        self.worker.file_progress.connect(
+            lambda pct: self.status_bar.showMessage(f"当前文件进度 {pct}%"))
+        self.worker.log.connect(self.log.appendPlainText)
+        self.worker.finished_signal.connect(self._on_finished)
+        self.btn_start.setEnabled(False)
+        self.btn_start.setText("处理中...")
+        self.btn_cancel.setVisible(True)
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+        self.log.clear()
+        self.log.appendPlainText(f"共 {len(jobs)} 个文件待处理"
+                                 + (f"，跳过 {skipped} 个" if skipped else ""))
+        self.worker.start()
+
+    def _cancel(self):
+        if self.worker and self.worker.isRunning():
+            self.btn_cancel.setEnabled(False)
+            self.btn_cancel.setText("取消中...")
+            self.worker.cancel()
+
+    def _on_finished(self, success, msg):
+        self.btn_start.setEnabled(True)
+        self.btn_start.setText("▶ 开始加水印")
+        self.btn_cancel.setVisible(False)
+        self.btn_cancel.setEnabled(True)
+        self.btn_cancel.setText("✖ 取消")
+        self.status_bar.showMessage("")
+        if success:
+            self.progress.setValue(100)
+            QMessageBox.information(self, "成功", msg)
+        else:
+            QMessageBox.warning(self, "失败", msg)
+
+
 # ==================== 设置页签 ====================
 class SettingsTab(QWidget):
     def __init__(self, config, parent=None):
@@ -1098,31 +1744,10 @@ class SettingsTab(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
-        # FFmpeg 路径
-        path_group = QGroupBox("🔧 FFmpeg 路径")
-        p_layout = QGridLayout(path_group)
-        p_layout.setContentsMargins(16, 4, 16, 16)
-        p_layout.setHorizontalSpacing(12)
-        p_layout.setVerticalSpacing(12)
-        p_layout.addWidget(QLabel("FFmpeg:"), 0, 0)
-        self.txt_ffmpeg = QLineEdit()
-        self.btn_ffmpeg = QPushButton("浏览...")
-        self.btn_detect = QPushButton("✦ 自动检测")
-        p_layout.addWidget(self.txt_ffmpeg, 0, 1)
-        p_layout.addWidget(self.btn_ffmpeg, 0, 2)
-        p_layout.addWidget(self.btn_detect, 0, 3)
-        p_layout.addWidget(QLabel("FFprobe:"), 1, 0)
-        self.txt_ffprobe = QLineEdit()
-        self.btn_ffprobe = QPushButton("浏览...")
-        p_layout.addWidget(self.txt_ffprobe, 1, 1)
-        p_layout.addWidget(self.btn_ffprobe, 1, 2)
-        p_layout.setColumnStretch(1, 1)
-        layout.addWidget(path_group)
-
         # 默认设置
         defaults_group = QGroupBox("🎛 默认设置")
         d_layout = QGridLayout(defaults_group)
-        d_layout.setContentsMargins(16, 4, 16, 16)
+        d_layout.setContentsMargins(0, 0, 0, 0)
         d_layout.setHorizontalSpacing(12)
         d_layout.setVerticalSpacing(12)
         d_layout.addWidget(QLabel("默认视频编码:"), 0, 0)
@@ -1145,6 +1770,14 @@ class SettingsTab(QWidget):
         self.lbl_nvenc.setObjectName("info")
         layout.addWidget(self.lbl_nvenc)
 
+        # 内置说明
+        hint = QLabel("ℹ 程序已内置 FFmpeg，无需配置。"
+                      "如需更换版本，可将 ffmpeg.exe / ffprobe.exe "
+                      "放入程序同目录的 ffmpeg_bin 文件夹")
+        hint.setObjectName("info")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
         # 保存
         self.btn_save = QPushButton("💾 保存设置")
         self.btn_save.setObjectName("primary")
@@ -1153,33 +1786,18 @@ class SettingsTab(QWidget):
         layout.addStretch()
 
         # 信号
-        self.btn_ffmpeg.clicked.connect(lambda: self._browse("txt_ffmpeg", "ffmpeg.exe"))
-        self.btn_ffprobe.clicked.connect(lambda: self._browse("txt_ffprobe", "ffprobe.exe"))
-        self.btn_detect.clicked.connect(self._auto_detect)
         self.btn_save.clicked.connect(self._save)
         _fix_input_heights(self)
 
-    def _browse(self, attr, name):
-        path, _ = QFileDialog.getOpenFileName(
-            self, f"选择 {name}", "", f"可执行文件 ({name});;所有文件 (*)"
-        )
-        if path:
-            getattr(self, attr).setText(path)
-            self._check_nvenc()
-
-    def _auto_detect(self):
-        ffmpeg, ffprobe = Config._auto_detect()
-        if ffmpeg:
-            self.txt_ffmpeg.setText(ffmpeg)
-        if ffprobe:
-            self.txt_ffprobe.setText(ffprobe)
-        if not ffmpeg:
-            QMessageBox.warning(self, "提示", "未找到 FFmpeg，请手动选择路径")
-        self._check_nvenc()
-
     def _check_nvenc(self):
-        ff = FFmpegWrapper(self.txt_ffmpeg.text(), self.txt_ffprobe.text())
-        if ff.check_nvenc():
+        ff = FFmpegWrapper(
+            self.config.get("ffmpeg_path", ""),
+            self.config.get("ffprobe_path", "")
+        )
+        if not ff.ffmpeg or not os.path.exists(ff.ffmpeg):
+            self.lbl_nvenc.setText("✗ 未找到 FFmpeg")
+            self.lbl_nvenc.setObjectName("error")
+        elif ff.check_nvenc():
             self.lbl_nvenc.setText("✓ NVENC 硬件加速可用")
             self.lbl_nvenc.setObjectName("success")
         else:
@@ -1189,8 +1807,6 @@ class SettingsTab(QWidget):
         self.style().polish(self.lbl_nvenc)
 
     def _load_settings(self):
-        self.txt_ffmpeg.setText(self.config.get("ffmpeg_path", ""))
-        self.txt_ffprobe.setText(self.config.get("ffprobe_path", ""))
         codec = self.config.get("default_codec", "hevc_nvenc")
         codec_map = {"hevc_nvenc": 0, "h264_nvenc": 1, "hevc": 2, "h264": 3}
         self.cmb_codec.setCurrentIndex(codec_map.get(codec, 0))
@@ -1200,8 +1816,6 @@ class SettingsTab(QWidget):
 
     def _save(self):
         codec_map = {0: "hevc_nvenc", 1: "h264_nvenc", 2: "hevc", 3: "h264"}
-        self.config.set("ffmpeg_path", self.txt_ffmpeg.text())
-        self.config.set("ffprobe_path", self.txt_ffprobe.text())
         self.config.set("default_codec", codec_map.get(self.cmb_codec.currentIndex(), "hevc_nvenc"))
         self.config.set("default_audio_bitrate", self.spn_audio.value())
         self.config.set("use_nvenc", self.chk_nvenc.isChecked())
@@ -1226,15 +1840,19 @@ class MainWindow(QMainWindow):
         tabs.setDocumentMode(True)
         self.merge_tab = MergeTab(self.config, self.statusBar())
         self.compress_tab = CompressTab(self.config, self.statusBar())
+        self.watermark_tab = WatermarkTab(self.config, self.statusBar())
+        self.pdf_tab = PdfTab(self.config, self.statusBar())
         self.settings_tab = SettingsTab(self.config)
         tabs.addTab(self.merge_tab, "🎬 合并视频")
         tabs.addTab(self.compress_tab, "📦 压缩视频")
+        tabs.addTab(self.watermark_tab, "💧 视频水印")
+        tabs.addTab(self.pdf_tab, "📄 PDF 工具")
         tabs.addTab(self.settings_tab, "⚙ 设置")
         self.setCentralWidget(tabs)
 
         ff_path = self.config.get("ffmpeg_path", "")
         if not ff_path or not os.path.exists(ff_path):
-            self.statusBar().showMessage("⚠ 请在设置中配置 FFmpeg 路径")
+            self.statusBar().showMessage("⚠ 未找到可用的 FFmpeg")
         else:
             self.statusBar().showMessage("就绪")
 
@@ -1266,7 +1884,11 @@ def main():
     pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
     pal.setColor(QPalette.PlaceholderText, QColor("#94a3b8"))
     app.setPalette(pal)
-    app.setStyleSheet(STYLE_SHEET)
+    icons = _gen_ui_icons()
+    style = STYLE_SHEET
+    for key, path in icons.items():
+        style = style.replace(key, path)
+    app.setStyleSheet(style)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

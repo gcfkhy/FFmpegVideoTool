@@ -1,7 +1,29 @@
 import json
 import os
-import shutil
 import sys
+
+
+def _exe_dir():
+    """exe 所在目录；开发模式下为源码目录"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _bundled_ffmpeg(name):
+    """定位随包分发的 ffmpeg 可执行文件。
+
+    优先级：exe 同目录 ffmpeg_bin（便于用户替换升级）> PyInstaller 单文件解包目录（exe 内置）。
+    """
+    p = os.path.join(_exe_dir(), "ffmpeg_bin", name)
+    if os.path.exists(p):
+        return p
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        p = os.path.join(meipass, "ffmpeg_bin", name)
+        if os.path.exists(p):
+            return p
+    return ""
 
 
 class Config:
@@ -41,32 +63,22 @@ class Config:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
 
     def _defaults(self):
-        ffmpeg, ffprobe = self._auto_detect()
         return {
-            "ffmpeg_path": ffmpeg,
-            "ffprobe_path": ffprobe,
             "default_codec": "hevc_nvenc",
             "default_audio_bitrate": 128,
             "use_nvenc": True,
             "last_output_dir": "",
         }
 
-    @staticmethod
-    def _auto_detect():
-        for name in ("ffmpeg", "ffmpeg.exe"):
-            p = shutil.which(name)
-            if p:
-                d = os.path.dirname(p)
-                ffprobe = os.path.join(d, "ffprobe.exe")
-                if os.path.exists(ffprobe):
-                    return p, ffprobe
-                return p, ""
-        hardcoded = r"D:\E\word转pdf\ffmpeg\ffmpeg.exe"
-        if os.path.exists(hardcoded):
-            return hardcoded, r"D:\E\word转pdf\ffmpeg\ffprobe.exe"
-        return "", ""
-
     def get(self, key, default=None):
+        if key in ("ffmpeg_path", "ffprobe_path"):
+            # 内置的 ffmpeg 优先，用户无需任何配置
+            name = "ffmpeg.exe" if key == "ffmpeg_path" else "ffprobe.exe"
+            bundled = _bundled_ffmpeg(name)
+            if bundled:
+                return bundled
+            # 未打包内置时回退到已配置/检测到的路径
+            return self.data.get(key, "")
         return self.data.get(key, default)
 
     def set(self, key, value):
