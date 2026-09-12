@@ -36,19 +36,110 @@ def _fix_input_heights(widget):
         w.setFixedHeight(36)
 
 
+APP_NAME = "媒体工具箱"
+APP_TAGLINE = "视频 · PDF · 本地处理"
+
 UI_ICONS = {}
 
+THEMES = {
+    "light": {
+        "BG": "#eef3f1",
+        "NAV_BG": "#ffffff",
+        "CARD": "#ffffff",
+        "INPUT_BG": "#f7faf9",
+        "INPUT_FOCUS_BG": "#ffffff",
+        "LOG_BG": "#f4f7f6",
+        "BORDER": "#d7e0dd",
+        "BORDER_HOVER": "#b7c7c2",
+        "TEXT": "#1f2a28",
+        "TEXT_MUTED": "#6b7c77",
+        "TEXT_TITLE": "#2c3a37",
+        "ACCENT": "#0d9f8a",
+        "ACCENT_HOVER": "#0b8b79",
+        "ACCENT_PRESSED": "#097365",
+        "ACCENT_SOFT": "rgba(13, 159, 138, 0.12)",
+        "ACCENT_SOFT2": "rgba(13, 159, 138, 0.18)",
+        "ON_ACCENT": "#ffffff",
+        "BTN_BG": "#ffffff",
+        "BTN_TEXT": "#2c3a37",
+        "BTN_HOVER": "#f3f8f6",
+        "BTN_DISABLED_BG": "#eef3f1",
+        "BTN_DISABLED_TEXT": "#9aa8a4",
+        "DANGER": "#d45454",
+        "DANGER_BORDER": "#f0b4b4",
+        "DANGER_BG": "#fff6f6",
+        "DANGER_HOVER": "#fdecec",
+        "SUCCESS": "#1a9e6a",
+        "WARNING": "#c9891a",
+        "ERROR": "#d45454",
+        "SCROLL": "#c5d2ce",
+        "SCROLL_HOVER": "#9aada7",
+        "HOVER_ITEM": "#f3f8f6",
+        "SELECT_TEXT": "#0b8b79",
+        "ICON": "#4a5d58",
+        "CHECK": "#ffffff",
+        "RADIUS": "8px",
+        "RADIUS_SM": "6px",
+    },
+    "dark": {
+        "BG": "#15191b",
+        "NAV_BG": "#1a1f22",
+        "CARD": "#1e2427",
+        "INPUT_BG": "#15191b",
+        "INPUT_FOCUS_BG": "#121618",
+        "LOG_BG": "#121618",
+        "BORDER": "#2c3438",
+        "BORDER_HOVER": "#3d4a4e",
+        "TEXT": "#e7eeec",
+        "TEXT_MUTED": "#8b9a95",
+        "TEXT_TITLE": "#d5e0dc",
+        "ACCENT": "#2dd4bf",
+        "ACCENT_HOVER": "#5eead4",
+        "ACCENT_PRESSED": "#14b8a6",
+        "ACCENT_SOFT": "rgba(45, 212, 191, 0.12)",
+        "ACCENT_SOFT2": "rgba(45, 212, 191, 0.18)",
+        "ON_ACCENT": "#042f2e",
+        "BTN_BG": "#252c30",
+        "BTN_TEXT": "#d5e0dc",
+        "BTN_HOVER": "#2c3539",
+        "BTN_DISABLED_BG": "#1a1f22",
+        "BTN_DISABLED_TEXT": "#5c6b67",
+        "DANGER": "#f0a0a0",
+        "DANGER_BORDER": "#7f1d1d",
+        "DANGER_BG": "#2a1616",
+        "DANGER_HOVER": "#3a1c1c",
+        "SUCCESS": "#34d399",
+        "WARNING": "#fbbf24",
+        "ERROR": "#f87171",
+        "SCROLL": "#3d4a4e",
+        "SCROLL_HOVER": "#5c6b67",
+        "HOVER_ITEM": "#252c30",
+        "SELECT_TEXT": "#5eead4",
+        "ICON": "#c5d4cf",
+        "CHECK": "#042f2e",
+        "RADIUS": "8px",
+        "RADIUS_SM": "6px",
+    },
+}
 
-def _gen_ui_icons():
-    """生成 QSS / 导航使用的 PNG 图标，返回占位符到路径的映射。"""
+
+def _hex_rgba(value):
+    value = value.lstrip("#")
+    return (int(value[0:2], 16), int(value[2:4], 16),
+            int(value[4:6], 16), 255)
+
+
+def _gen_ui_icons(theme=None):
+    """按当前主题生成箭头 / 对勾 / 导航图标。"""
     from PIL import Image, ImageDraw
 
-    d = os.path.join(tempfile.gettempdir(), "VideoTool_ui")
+    theme = theme or THEMES["light"]
+    d = os.path.join(tempfile.gettempdir(), "MediaKit_ui")
     os.makedirs(d, exist_ok=True)
-    gray = (148, 163, 184, 255)    # #94a3b8
-    accent = (45, 212, 191, 255)   # #2dd4bf
-    white = (226, 232, 240, 255)   # #e2e8f0
-    muted = (107, 114, 128, 255)   # #6b7280
+    gray = _hex_rgba(theme["ICON"])
+    accent = _hex_rgba(theme["ACCENT"])
+    check = _hex_rgba(theme["CHECK"])
+    icon = _hex_rgba(theme["ICON"])
 
     def _save(name, size, draw_fn):
         img = Image.new("RGBA", size, (0, 0, 0, 0))
@@ -59,7 +150,7 @@ def _gen_ui_icons():
 
     def _stroke_icon(draw_fn):
         def _inner(dr):
-            draw_fn(dr, white)
+            draw_fn(dr, icon)
         return _inner
 
     icons = {
@@ -75,7 +166,7 @@ def _gen_ui_icons():
         "__ICON_CHECK__": _save(
             "check.png", (14, 12),
             lambda dr: dr.line([(2, 6), (5, 9), (12, 2)],
-                               fill=white, width=2)),
+                               fill=check, width=2)),
         "__NAV_MERGE__": _save(
             "nav_merge.png", (20, 20),
             _stroke_icon(lambda dr, c: (
@@ -109,21 +200,21 @@ def _gen_ui_icons():
             ))),
         "__NAV_DOT__": _save(
             "nav_dot.png", (8, 8),
-            lambda dr: dr.ellipse([0, 0, 7, 7], fill=muted)),
+            lambda dr: dr.ellipse([0, 0, 7, 7], fill=gray)),
     }
     global UI_ICONS
     UI_ICONS = icons
     return icons
 
 
-# ==================== 深色影视工具主题 ====================
-STYLE_SHEET = """
+# ==================== 明暗主题（小圆角卡片） ====================
+STYLE_TEMPLATE = """
 /* === 基础 === */
 QMainWindow, QDialog {
-    background-color: #0e1117;
+    background-color: __BG__;
 }
 QWidget {
-    color: #e8edf4;
+    color: __TEXT__;
     font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
     font-size: 13px;
     background-color: transparent;
@@ -131,157 +222,166 @@ QWidget {
 
 /* === 侧栏 === */
 QWidget#navRail {
-    background-color: #0a0d12;
-    border-right: 1px solid #232833;
+    background-color: __NAV_BG__;
+    border-right: 1px solid __BORDER__;
 }
 QLabel#brandTitle {
-    color: #f1f5f9;
+    color: __TEXT__;
     font-size: 16px;
     font-weight: 700;
     padding: 0px;
 }
 QLabel#brandSub {
-    color: #6b7280;
+    color: __TEXT_MUTED__;
     font-size: 11px;
     padding: 0px 0px 4px 0px;
 }
 QLabel#navStatus {
-    color: #6b7280;
+    color: __TEXT_MUTED__;
     font-size: 11px;
     padding: 8px 4px 0px 4px;
 }
 QPushButton#navItem {
     background-color: transparent;
-    color: #94a3b8;
+    color: __TEXT_MUTED__;
     border: none;
-    border-radius: 10px;
+    border-radius: __RADIUS_SM__;
     text-align: left;
-    padding: 10px 12px;
+    padding: 9px 12px;
     min-height: 20px;
     font-weight: 500;
     font-size: 13px;
 }
 QPushButton#navItem:hover {
-    background-color: #171b24;
-    color: #e8edf4;
+    background-color: __HOVER_ITEM__;
+    color: __TEXT__;
 }
 QPushButton#navItem:checked {
-    background-color: rgba(45, 212, 191, 0.12);
-    color: #2dd4bf;
+    background-color: __ACCENT_SOFT__;
+    color: __ACCENT__;
     font-weight: 600;
 }
 QPushButton#navItem:pressed {
-    background-color: #1e2430;
+    background-color: __ACCENT_SOFT__;
+}
+QPushButton#themeToggle {
+    background-color: __BTN_BG__;
+    color: __BTN_TEXT__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS_SM__;
+    padding: 6px 10px;
+    min-height: 18px;
+    font-weight: 500;
+}
+QPushButton#themeToggle:hover {
+    border-color: __ACCENT__;
+    color: __ACCENT__;
 }
 
 /* === 按钮 === */
 QPushButton {
-    background-color: #1e2430;
-    color: #d5dce8;
-    border: 1px solid #343b4a;
+    background-color: __BTN_BG__;
+    color: __BTN_TEXT__;
+    border: 1px solid __BORDER__;
     padding: 7px 14px;
-    border-radius: 8px;
+    border-radius: __RADIUS_SM__;
     min-height: 22px;
     font-weight: 500;
 }
 QPushButton:hover {
-    background-color: #252b38;
-    border-color: #2dd4bf;
-    color: #f1f5f9;
+    background-color: __BTN_HOVER__;
+    border-color: __ACCENT__;
+    color: __TEXT__;
 }
 QPushButton:pressed {
-    background-color: #171b24;
-    border-color: #2dd4bf;
+    background-color: __HOVER_ITEM__;
+    border-color: __ACCENT__;
 }
 QPushButton:disabled {
-    background-color: #151922;
-    color: #4b5563;
-    border-color: #232833;
+    background-color: __BTN_DISABLED_BG__;
+    color: __BTN_DISABLED_TEXT__;
+    border-color: __BORDER__;
 }
 QPushButton#primary {
-    background-color: #2dd4bf;
-    color: #042f2e;
+    background-color: __ACCENT__;
+    color: __ON_ACCENT__;
     border: none;
     min-height: 24px;
     font-weight: 700;
+    border-radius: __RADIUS__;
 }
 QPushButton#primary:hover {
-    background-color: #5eead4;
+    background-color: __ACCENT_HOVER__;
 }
 QPushButton#primary:pressed {
-    background-color: #14b8a6;
+    background-color: __ACCENT_PRESSED__;
 }
 QPushButton#primary:disabled {
-    background-color: #134e4a;
-    color: #5eead4;
+    background-color: __ACCENT_SOFT2__;
+    color: __TEXT_MUTED__;
 }
 QPushButton#cancel {
-    background-color: transparent;
-    color: #fca5a5;
-    border: 1px solid #7f1d1d;
+    background-color: __DANGER_BG__;
+    color: __DANGER__;
+    border: 1px solid __DANGER_BORDER__;
     font-weight: 500;
 }
 QPushButton#cancel:hover {
-    background-color: #2a1212;
-    border-color: #f87171;
-    color: #fecaca;
-}
-QPushButton#cancel:pressed {
-    background-color: #3f1515;
+    background-color: __DANGER_HOVER__;
 }
 
 /* === 列表 === */
 QListWidget {
-    background-color: #12161e;
-    border: 1px dashed #3d4658;
-    border-radius: 12px;
+    background-color: __INPUT_BG__;
+    border: 1px dashed __BORDER_HOVER__;
+    border-radius: __RADIUS__;
     padding: 8px;
     outline: none;
 }
 QListWidget[hasItems="true"] {
-    border: 1px solid #2c3342;
+    border: 1px solid __BORDER__;
     border-style: solid;
 }
 QListWidget::item {
-    padding: 10px 12px;
-    border-radius: 8px;
-    color: #d5dce8;
+    padding: 9px 12px;
+    border-radius: __RADIUS_SM__;
+    color: __TEXT__;
     margin: 2px 0px;
 }
 QListWidget::item:selected {
-    background-color: rgba(45, 212, 191, 0.16);
-    color: #5eead4;
+    background-color: __ACCENT_SOFT2__;
+    color: __SELECT_TEXT__;
 }
 QListWidget::item:hover:!selected {
-    background-color: #1a2030;
+    background-color: __HOVER_ITEM__;
 }
 QLabel#emptyHint {
-    color: #64748b;
+    color: __TEXT_MUTED__;
     font-size: 13px;
     background: transparent;
 }
 
 /* === 输入框 === */
 QLineEdit, QAbstractSpinBox, QComboBox {
-    background-color: #12161e;
-    border: 1px solid #343b4a;
-    border-radius: 8px;
+    background-color: __INPUT_BG__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS_SM__;
     padding: 0px 12px;
-    color: #e8edf4;
-    selection-background-color: #134e4a;
-    selection-color: #ccfbf1;
+    color: __TEXT__;
+    selection-background-color: __ACCENT_SOFT2__;
+    selection-color: __SELECT_TEXT__;
 }
 QLineEdit:hover, QAbstractSpinBox:hover, QComboBox:hover {
-    border-color: #4b5563;
+    border-color: __BORDER_HOVER__;
 }
 QLineEdit:focus, QAbstractSpinBox:focus, QComboBox:focus {
-    border: 1px solid #2dd4bf;
-    background-color: #0f141c;
+    border: 1px solid __ACCENT__;
+    background-color: __INPUT_FOCUS_BG__;
 }
 QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled {
-    color: #4b5563;
-    border-color: #232833;
-    background-color: #10141b;
+    color: __BTN_DISABLED_TEXT__;
+    border-color: __BORDER__;
+    background-color: __BTN_DISABLED_BG__;
 }
 
 /* === 下拉框 === */
@@ -290,9 +390,9 @@ QComboBox::drop-down {
     width: 32px;
 }
 QComboBox::drop-down:hover {
-    background-color: rgba(45, 212, 191, 0.10);
-    border-top-right-radius: 8px;
-    border-bottom-right-radius: 8px;
+    background-color: __ACCENT_SOFT__;
+    border-top-right-radius: __RADIUS_SM__;
+    border-bottom-right-radius: __RADIUS_SM__;
 }
 QComboBox::down-arrow {
     image: url("__ICON_DOWN__");
@@ -300,26 +400,26 @@ QComboBox::down-arrow {
     height: 8px;
 }
 QComboBox QAbstractItemView {
-    background-color: #171b24;
-    border: 1px solid #343b4a;
-    border-radius: 10px;
-    color: #e8edf4;
-    selection-background-color: rgba(45, 212, 191, 0.16);
-    selection-color: #5eead4;
+    background-color: __CARD__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS__;
+    color: __TEXT__;
+    selection-background-color: __ACCENT_SOFT2__;
+    selection-color: __SELECT_TEXT__;
     outline: none;
     padding: 6px;
 }
 QComboBox QAbstractItemView::item {
     padding: 8px 12px;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     min-height: 20px;
 }
 QComboBox QAbstractItemView::item:hover {
-    background-color: #1e2430;
+    background-color: __HOVER_ITEM__;
 }
 QComboBox QAbstractItemView::item:selected {
-    background-color: rgba(45, 212, 191, 0.16);
-    color: #5eead4;
+    background-color: __ACCENT_SOFT2__;
+    color: __SELECT_TEXT__;
 }
 
 QAbstractSpinBox {
@@ -332,10 +432,10 @@ QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
     border: none;
     width: 24px;
     height: 18px;
-    border-radius: 6px;
+    border-radius: 4px;
 }
 QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {
-    background-color: rgba(45, 212, 191, 0.12);
+    background-color: __ACCENT_SOFT__;
 }
 QAbstractSpinBox::up-button {
     subcontrol-origin: border;
@@ -358,42 +458,42 @@ QAbstractSpinBox::down-arrow {
 
 /* === 进度条 === */
 QProgressBar {
-    background-color: #1e2430;
-    border: none;
-    border-radius: 6px;
+    background-color: __INPUT_BG__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS_SM__;
     text-align: center;
-    color: #e8edf4;
+    color: __TEXT__;
     min-height: 18px;
     font-weight: 600;
     font-size: 11px;
 }
 QProgressBar::chunk {
-    background-color: #2dd4bf;
-    border-radius: 6px;
+    background-color: __ACCENT__;
+    border-radius: __RADIUS_SM__;
 }
 
 /* === 日志框 === */
 QPlainTextEdit {
-    background-color: #0a0d12;
-    border: 1px solid #232833;
-    border-radius: 10px;
-    color: #94a3b8;
+    background-color: __LOG_BG__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS__;
+    color: __TEXT_MUTED__;
     font-family: "Cascadia Mono", "Consolas", monospace;
     font-size: 12px;
     padding: 8px;
 }
 
-/* === 分组框 === */
+/* === 卡片 === */
 QGroupBox {
-    background-color: #151922;
-    border: 1px solid #232833;
-    border-radius: 12px;
+    background-color: __CARD__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS__;
     margin-top: 10px;
-    padding-top: 36px;
+    padding-top: 34px;
     padding-bottom: 14px;
     padding-left: 14px;
     padding-right: 14px;
-    color: #e8edf4;
+    color: __TEXT__;
     font-weight: 600;
     font-size: 13px;
 }
@@ -403,26 +503,26 @@ QGroupBox::title {
     top: 10px;
     left: 12px;
     background-color: transparent;
-    color: #cbd5e1;
+    color: __TEXT_TITLE__;
     font-size: 13px;
     font-weight: 700;
 }
 
 /* === 滚动区域 === */
 QScrollArea {
-    background-color: #0e1117;
+    background-color: __BG__;
     border: none;
 }
 QScrollArea > QWidget {
-    background-color: #0e1117;
+    background-color: __BG__;
 }
 QWidget#pageContent {
-    background-color: #0e1117;
+    background-color: __BG__;
 }
 
 /* === 复选框 === */
 QCheckBox {
-    color: #cbd5e1;
+    color: __TEXT__;
     spacing: 10px;
     padding: 4px 0px;
 }
@@ -430,33 +530,33 @@ QCheckBox::indicator {
     width: 16px;
     height: 16px;
     border-radius: 4px;
-    border: 1px solid #3d4658;
-    background-color: #12161e;
+    border: 1px solid __BORDER_HOVER__;
+    background-color: __INPUT_BG__;
 }
 QCheckBox::indicator:checked {
-    background-color: #2dd4bf;
-    border-color: #2dd4bf;
+    background-color: __ACCENT__;
+    border-color: __ACCENT__;
     image: url("__ICON_CHECK__");
 }
 QCheckBox::indicator:hover {
-    border-color: #2dd4bf;
+    border-color: __ACCENT__;
 }
 QCheckBox::indicator:checked:hover {
-    background-color: #14b8a6;
-    border-color: #14b8a6;
+    background-color: __ACCENT_HOVER__;
+    border-color: __ACCENT_HOVER__;
 }
 
 /* === 标签状态色 === */
-QLabel#info { color: #64748b; }
-QLabel#success { color: #34d399; font-weight: 600; }
-QLabel#warning { color: #fbbf24; font-weight: 600; }
-QLabel#error { color: #f87171; font-weight: 600; }
+QLabel#info { color: __TEXT_MUTED__; }
+QLabel#success { color: __SUCCESS__; font-weight: 600; }
+QLabel#warning { color: __WARNING__; font-weight: 600; }
+QLabel#error { color: __ERROR__; font-weight: 600; }
 
 /* === 状态栏 === */
 QStatusBar {
-    background-color: #0a0d12;
-    color: #64748b;
-    border-top: 1px solid #232833;
+    background-color: __NAV_BG__;
+    color: __TEXT_MUTED__;
+    border-top: 1px solid __BORDER__;
     padding: 4px 14px;
     font-size: 12px;
 }
@@ -469,12 +569,12 @@ QScrollBar:vertical {
     margin: 4px 2px;
 }
 QScrollBar::handle:vertical {
-    background-color: #343b4a;
+    background-color: __SCROLL__;
     border-radius: 5px;
     min-height: 40px;
 }
 QScrollBar::handle:vertical:hover {
-    background-color: #4b5563;
+    background-color: __SCROLL_HOVER__;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
@@ -489,12 +589,12 @@ QScrollBar:horizontal {
     margin: 2px 4px;
 }
 QScrollBar::handle:horizontal {
-    background-color: #343b4a;
+    background-color: __SCROLL__;
     border-radius: 5px;
     min-width: 40px;
 }
 QScrollBar::handle:horizontal:hover {
-    background-color: #4b5563;
+    background-color: __SCROLL_HOVER__;
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0;
@@ -505,35 +605,35 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
 
 /* === 工具提示 === */
 QToolTip {
-    background-color: #171b24;
-    color: #e8edf4;
-    border: 1px solid #343b4a;
-    border-radius: 8px;
+    background-color: __CARD__;
+    color: __TEXT__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS_SM__;
     padding: 6px 10px;
     font-size: 12px;
 }
 
 /* === 菜单 / 对话框 === */
 QMenu {
-    background-color: #171b24;
-    color: #e8edf4;
-    border: 1px solid #343b4a;
-    border-radius: 10px;
+    background-color: __CARD__;
+    color: __TEXT__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS__;
     padding: 6px;
 }
 QMenu::item {
     padding: 8px 24px;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
 }
 QMenu::item:selected {
-    background-color: rgba(45, 212, 191, 0.16);
-    color: #5eead4;
+    background-color: __ACCENT_SOFT2__;
+    color: __SELECT_TEXT__;
 }
 QMessageBox {
-    background-color: #171b24;
+    background-color: __CARD__;
 }
 QMessageBox QLabel {
-    color: #e8edf4;
+    color: __TEXT__;
 }
 
 QStackedWidget {
@@ -543,6 +643,43 @@ QStackedWidget > QWidget > QWidget {
     background: transparent;
 }
 """
+
+
+def _render_style(theme, icons):
+    style = STYLE_TEMPLATE
+    for key, value in theme.items():
+        style = style.replace("__" + key + "__", str(value))
+    for key, path in icons.items():
+        style = style.replace(key, path)
+    return style
+
+
+def _apply_palette(app, theme):
+    pal = app.palette()
+    pal.setColor(QPalette.Window, QColor(theme["BG"]))
+    pal.setColor(QPalette.WindowText, QColor(theme["TEXT"]))
+    pal.setColor(QPalette.Base, QColor(theme["INPUT_BG"]))
+    pal.setColor(QPalette.AlternateBase, QColor(theme["CARD"]))
+    pal.setColor(QPalette.ToolTipBase, QColor(theme["CARD"]))
+    pal.setColor(QPalette.ToolTipText, QColor(theme["TEXT"]))
+    pal.setColor(QPalette.Text, QColor(theme["TEXT"]))
+    pal.setColor(QPalette.Button, QColor(theme["BTN_BG"]))
+    pal.setColor(QPalette.ButtonText, QColor(theme["BTN_TEXT"]))
+    pal.setColor(QPalette.Highlight, QColor(theme["ACCENT"]))
+    pal.setColor(QPalette.HighlightedText, QColor(theme["ON_ACCENT"]))
+    pal.setColor(QPalette.PlaceholderText, QColor(theme["TEXT_MUTED"]))
+    app.setPalette(pal)
+
+
+def apply_app_theme(app, name):
+    """应用浅色或深色主题，并刷新图标。"""
+    if name not in THEMES:
+        name = "light"
+    theme = THEMES[name]
+    icons = _gen_ui_icons(theme)
+    _apply_palette(app, theme)
+    app.setStyleSheet(_render_style(theme, icons))
+    return name, icons
 
 
 # ==================== 自定义控件 ====================
@@ -1888,6 +2025,8 @@ class WatermarkTab(QWidget):
 
 # ==================== 设置页签 ====================
 class SettingsTab(QWidget):
+    theme_changed = pyqtSignal(str)
+
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
@@ -1907,6 +2046,18 @@ class SettingsTab(QWidget):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
+
+        appear = QGroupBox("外观")
+        a_layout = QGridLayout(appear)
+        a_layout.setContentsMargins(0, 0, 0, 0)
+        a_layout.setHorizontalSpacing(12)
+        a_layout.setVerticalSpacing(12)
+        a_layout.addWidget(QLabel("界面主题:"), 0, 0)
+        self.cmb_theme = QComboBox()
+        self.cmb_theme.addItems(["浅色", "深色"])
+        a_layout.addWidget(self.cmb_theme, 0, 1)
+        a_layout.setColumnStretch(1, 1)
+        layout.addWidget(appear)
 
         # 默认设置
         defaults_group = QGroupBox("默认设置")
@@ -1954,6 +2105,7 @@ class SettingsTab(QWidget):
 
         # 信号
         self.btn_save.clicked.connect(self._save)
+        self.cmb_theme.currentIndexChanged.connect(self._on_theme_combo)
 
         # 内容装入滚动区域后，再统一输入控件高度
         scroll.setWidget(content)
@@ -1983,7 +2135,16 @@ class SettingsTab(QWidget):
         self.cmb_codec.setCurrentIndex(codec_map.get(codec, 0))
         self.spn_audio.setValue(self.config.get("default_audio_bitrate", 128))
         self.chk_nvenc.setChecked(self.config.get("use_nvenc", True))
+        self.sync_theme(self.config.get("theme", "light"))
         self._check_nvenc()
+
+    def sync_theme(self, name):
+        self.cmb_theme.blockSignals(True)
+        self.cmb_theme.setCurrentIndex(0 if name != "dark" else 1)
+        self.cmb_theme.blockSignals(False)
+
+    def _on_theme_combo(self, idx):
+        self.theme_changed.emit("light" if idx == 0 else "dark")
 
     def _save(self):
         codec_map = {0: "hevc_nvenc", 1: "h264_nvenc", 2: "hevc", 3: "h264"}
@@ -1996,18 +2157,24 @@ class SettingsTab(QWidget):
 # ==================== 左侧导航 ====================
 class NavRail(QWidget):
     page_changed = pyqtSignal(int)
+    theme_toggled = pyqtSignal()
 
     def __init__(self, icons, parent=None):
         super().__init__(parent)
         self.setObjectName("navRail")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFixedWidth(208)
+        self._nav_keys = [
+            "__NAV_MERGE__", "__NAV_COMPRESS__",
+            "__NAV_WATERMARK__", "__NAV_PDF__", "__NAV_SETTINGS__",
+        ]
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 22, 14, 16)
         layout.setSpacing(4)
 
-        brand = QLabel("视频工具箱")
+        brand = QLabel(APP_NAME)
         brand.setObjectName("brandTitle")
-        sub = QLabel("本地 FFmpeg 工具")
+        sub = QLabel(APP_TAGLINE)
         sub.setObjectName("brandSub")
         layout.addWidget(brand)
         layout.addWidget(sub)
@@ -2015,21 +2182,25 @@ class NavRail(QWidget):
 
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
-        items = [
-            ("__NAV_MERGE__", "合并视频"),
-            ("__NAV_COMPRESS__", "压缩视频"),
-            ("__NAV_WATERMARK__", "视频水印"),
-            ("__NAV_PDF__", "PDF 工具"),
-        ]
-        for i, (key, text) in enumerate(items):
-            btn = self._make_item(icons.get(key, ""), text)
+        labels = ["合并视频", "压缩视频", "视频水印", "PDF 工具"]
+        self._nav_btns = []
+        for i, text in enumerate(labels):
+            btn = self._make_item(icons.get(self._nav_keys[i], ""), text)
             self.group.addButton(btn, i)
+            self._nav_btns.append(btn)
             layout.addWidget(btn)
 
         layout.addStretch(1)
         btn_set = self._make_item(icons.get("__NAV_SETTINGS__", ""), "设置")
         self.group.addButton(btn_set, 4)
+        self._nav_btns.append(btn_set)
         layout.addWidget(btn_set)
+
+        self.btn_theme = QPushButton("切换为深色")
+        self.btn_theme.setObjectName("themeToggle")
+        self.btn_theme.setCursor(Qt.PointingHandCursor)
+        self.btn_theme.clicked.connect(self.theme_toggled.emit)
+        layout.addWidget(self.btn_theme)
 
         self.lbl_ff = QLabel()
         self.lbl_ff.setObjectName("navStatus")
@@ -2051,6 +2222,18 @@ class NavRail(QWidget):
             btn.setIconSize(QSize(16, 16))
         return btn
 
+    def refresh_icons(self, icons):
+        for btn, key in zip(self._nav_btns, self._nav_keys):
+            path = icons.get(key, "")
+            if path:
+                btn.setIcon(QIcon(path))
+
+    def set_theme_label(self, name):
+        if name == "dark":
+            self.btn_theme.setText("切换为浅色")
+        else:
+            self.btn_theme.setText("切换为深色")
+
     def set_ffmpeg_status(self, ok):
         if ok:
             self.lbl_ff.setText("FFmpeg 已就绪")
@@ -2063,7 +2246,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = Config()
-        self.setWindowTitle("视频工具箱 · FFmpeg Video Tool")
+        self._theme = self.config.get("theme", "light")
+        self.setWindowTitle(APP_NAME)
         self.setMinimumSize(920, 680)
         self.resize(1040, 760)
 
@@ -2093,6 +2277,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.nav.page_changed.connect(self.stack.setCurrentIndex)
+        self.nav.theme_toggled.connect(self._toggle_theme)
+        self.settings_tab.theme_changed.connect(self.set_theme)
+        self.nav.set_theme_label(self._theme)
 
         ff_path = self.config.get("ffmpeg_path", "")
         ff_ok = bool(ff_path and os.path.exists(ff_path))
@@ -2101,6 +2288,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("就绪")
         else:
             self.statusBar().showMessage("未找到可用的 FFmpeg")
+
+    def _toggle_theme(self):
+        self.set_theme("light" if self._theme == "dark" else "dark")
+
+    def set_theme(self, name, persist=True):
+        app = QApplication.instance()
+        name, icons = apply_app_theme(app, name)
+        self._theme = name
+        self.nav.refresh_icons(icons)
+        self.nav.set_theme_label(name)
+        self.settings_tab.sync_theme(name)
+        if persist:
+            self.config.set("theme", name)
 
 
 def main():
@@ -2115,25 +2315,8 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    pal = app.palette()
-    pal.setColor(QPalette.Window, QColor("#0e1117"))
-    pal.setColor(QPalette.WindowText, QColor("#e8edf4"))
-    pal.setColor(QPalette.Base, QColor("#12161e"))
-    pal.setColor(QPalette.AlternateBase, QColor("#151922"))
-    pal.setColor(QPalette.ToolTipBase, QColor("#171b24"))
-    pal.setColor(QPalette.ToolTipText, QColor("#e8edf4"))
-    pal.setColor(QPalette.Text, QColor("#e8edf4"))
-    pal.setColor(QPalette.Button, QColor("#1e2430"))
-    pal.setColor(QPalette.ButtonText, QColor("#d5dce8"))
-    pal.setColor(QPalette.Highlight, QColor("#2dd4bf"))
-    pal.setColor(QPalette.HighlightedText, QColor("#042f2e"))
-    pal.setColor(QPalette.PlaceholderText, QColor("#64748b"))
-    app.setPalette(pal)
-    icons = _gen_ui_icons()
-    style = STYLE_SHEET
-    for key, path in icons.items():
-        style = style.replace(key, path)
-    app.setStyleSheet(style)
+    config = Config()
+    apply_app_theme(app, config.get("theme", "light"))
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo   VideoTool Build Script
+echo   MediaKit Build Script
 echo ========================================
 echo.
 echo [1/4] Checking dependencies...
@@ -24,6 +24,7 @@ echo [3/4] Cleaning old files...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist VideoTool.spec del VideoTool.spec
+if exist MediaKit.spec del MediaKit.spec
 echo.
 echo [4/4] Building exe...
 if not exist ffmpeg_bin\ffmpeg.exe (
@@ -31,7 +32,7 @@ if not exist ffmpeg_bin\ffmpeg.exe (
     pause
     exit /b 1
 )
-python -m PyInstaller --noconsole --onefile --name VideoTool --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --clean main.py
+python -m PyInstaller --noconsole --onefile --name MediaKit --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --clean main.py
 if errorlevel 1 (
     echo Build failed!
     pause
@@ -40,6 +41,6 @@ if errorlevel 1 (
 echo.
 echo ========================================
 echo   Build complete!
-echo   Output: dist\VideoTool.exe
+echo   Output: dist\MediaKit.exe
 echo ========================================
 pause

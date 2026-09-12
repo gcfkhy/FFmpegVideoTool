@@ -68,6 +68,7 @@ class Config:
             "default_audio_bitrate": 128,
             "use_nvenc": True,
             "last_output_dir": "",
+            "theme": "light",
         }
 
     def get(self, key, default=None):
