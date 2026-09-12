@@ -126,7 +126,7 @@ QPushButton {
     border: 1px solid #cbd5e1;
     padding: 8px 18px;
     border-radius: 10px;
-    min-height: 24px;
+    min-height: 22px;
     font-weight: 500;
 }
 QPushButton:hover {
@@ -147,6 +147,7 @@ QPushButton#primary {
     background-color: #4f46e5;
     color: #ffffff;
     border: none;
+    min-height: 24px;
     font-weight: 600;
 }
 QPushButton#primary:hover {
@@ -198,7 +199,7 @@ QListWidget::item:hover:!selected {
 }
 
 /* === 输入框 === */
-QLineEdit, QSpinBox, QComboBox {
+QLineEdit, QAbstractSpinBox, QComboBox {
     background-color: #ffffff;
     border: 1px solid #cbd5e1;
     border-radius: 10px;
@@ -206,15 +207,15 @@ QLineEdit, QSpinBox, QComboBox {
     color: #1e293b;
     selection-background-color: #a5b4fc;
 }
-QLineEdit:hover, QSpinBox:hover, QComboBox:hover {
+QLineEdit:hover, QAbstractSpinBox:hover, QComboBox:hover {
     border-color: #94a3b8;
 }
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+QLineEdit:focus, QAbstractSpinBox:focus, QComboBox:focus {
     border: 2px solid #6366f1;
     padding: 0px 13px;
     background-color: #fbfbff;
 }
-QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
+QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled {
     color: #94a3b8;
     border-color: #e2e8f0;
     background-color: #f8fafc;
@@ -258,35 +259,35 @@ QComboBox QAbstractItemView::item:selected {
     color: #4f46e5;
 }
 
-QSpinBox {
+QAbstractSpinBox {
     padding-right: 30px;
 }
 
 /* === 数字框箭头 === */
-QSpinBox::up-button, QSpinBox::down-button {
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
     background-color: transparent;
     border: none;
     width: 24px;
     height: 18px;
     border-radius: 6px;
 }
-QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {
     background-color: rgba(99, 102, 241, 0.12);
 }
-QSpinBox::up-button {
+QAbstractSpinBox::up-button {
     subcontrol-origin: border;
     subcontrol-position: top right;
 }
-QSpinBox::down-button {
+QAbstractSpinBox::down-button {
     subcontrol-origin: border;
     subcontrol-position: bottom right;
 }
-QSpinBox::up-arrow {
+QAbstractSpinBox::up-arrow {
     image: url("__ICON_UP__");
     width: 12px;
     height: 8px;
 }
-QSpinBox::down-arrow {
+QAbstractSpinBox::down-arrow {
     image: url("__ICON_DOWN__");
     width: 12px;
     height: 8px;
@@ -561,9 +562,24 @@ class MergeTab(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("pageContent")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
+
+        # 文件卡片
+        file_group = QGroupBox("📁 文件列表")
+        f_layout = QVBoxLayout(file_group)
+        f_layout.setContentsMargins(0, 0, 0, 0)
+        f_layout.setSpacing(10)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -579,19 +595,24 @@ class MergeTab(QWidget):
         toolbar.addStretch()
         for btn in (self.btn_up, self.btn_down, self.btn_sort):
             toolbar.addWidget(btn)
-        layout.addLayout(toolbar)
+        f_layout.addLayout(toolbar)
 
         # 提示
         hint = QLabel("✦ 提示: 拖拽文件到列表可添加，列表内拖拽可调整顺序")
         hint.setObjectName("info")
-        layout.addWidget(hint)
+        f_layout.addWidget(hint)
 
         # 文件列表
         self.file_list = FileListWidget()
         self.file_list.setMinimumHeight(240)
-        layout.addWidget(self.file_list, 1)
+        f_layout.addWidget(self.file_list, 1)
+        layout.addWidget(file_group)
 
-        # 输出文件
+        # 输出卡片
+        out_group = QGroupBox("📤 输出")
+        o_layout = QVBoxLayout(out_group)
+        o_layout.setContentsMargins(0, 0, 0, 0)
+        o_layout.setSpacing(10)
         out_layout = QHBoxLayout()
         out_layout.setSpacing(10)
         out_layout.addWidget(QLabel("输出文件:"))
@@ -599,20 +620,17 @@ class MergeTab(QWidget):
         self.btn_browse_out = QPushButton("浏览...")
         out_layout.addWidget(self.txt_output, 1)
         out_layout.addWidget(self.btn_browse_out)
-        layout.addLayout(out_layout)
-
-        # 选项
+        o_layout.addLayout(out_layout)
         opt_layout = QHBoxLayout()
         self.chk_reencode = QCheckBox("编码不一致时重编码合并")
         self.chk_reencode.setChecked(True)
         opt_layout.addWidget(self.chk_reencode)
         opt_layout.addStretch()
-        layout.addLayout(opt_layout)
-
-        # 状态
+        o_layout.addLayout(opt_layout)
         self.lbl_status = QLabel("")
         self.lbl_status.setObjectName("info")
-        layout.addWidget(self.lbl_status)
+        o_layout.addWidget(self.lbl_status)
+        layout.addWidget(out_group)
 
         # 开始按钮 + 取消按钮
         btn_row = QHBoxLayout()
@@ -651,6 +669,10 @@ class MergeTab(QWidget):
         self.btn_cancel.clicked.connect(self._cancel_merge)
         self.file_list.files_dropped.connect(self._add_file_paths)
         self.file_list.reordered.connect(self._update_indices)
+
+        # 内容装入滚动区域后，再统一输入控件高度（content 需已是 self 的子控件）
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
         _fix_input_heights(self)
 
     def _get_ff(self):
@@ -1535,7 +1557,11 @@ class WatermarkTab(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
-        # 工具栏
+        # 文件卡片
+        file_group = QGroupBox("📁 文件列表")
+        f_layout = QVBoxLayout(file_group)
+        f_layout.setContentsMargins(0, 0, 0, 0)
+        f_layout.setSpacing(10)
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
         self.btn_add = QPushButton("＋ 添加文件")
@@ -1546,16 +1572,17 @@ class WatermarkTab(QWidget):
                     self.btn_clear):
             toolbar.addWidget(btn)
         toolbar.addStretch()
-        layout.addLayout(toolbar)
+        f_layout.addLayout(toolbar)
 
         hint = QLabel("✦ 提示: 拖拽视频文件到列表可添加；已加水印的视频可自动跳过")
         hint.setObjectName("info")
-        layout.addWidget(hint)
+        f_layout.addWidget(hint)
 
         # 文件列表
         self.file_list = FileListWidget()
         self.file_list.setMinimumHeight(200)
-        layout.addWidget(self.file_list, 1)
+        f_layout.addWidget(self.file_list, 1)
+        layout.addWidget(file_group)
 
         # 参数
         params = QGroupBox("💧 水印设置")
@@ -1767,7 +1794,16 @@ class SettingsTab(QWidget):
         self._load_settings()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("pageContent")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
@@ -1792,18 +1828,21 @@ class SettingsTab(QWidget):
         d_layout.setColumnStretch(1, 1)
         layout.addWidget(defaults_group)
 
-        # NVENC 状态
+        # 运行状态
+        status_group = QGroupBox("📊 运行状态")
+        s_layout = QVBoxLayout(status_group)
+        s_layout.setContentsMargins(0, 0, 0, 0)
+        s_layout.setSpacing(10)
         self.lbl_nvenc = QLabel()
         self.lbl_nvenc.setObjectName("info")
-        layout.addWidget(self.lbl_nvenc)
-
-        # 内置说明
+        s_layout.addWidget(self.lbl_nvenc)
         hint = QLabel("ℹ 程序已内置 FFmpeg，无需配置。"
                       "如需更换版本，可将 ffmpeg.exe / ffprobe.exe "
                       "放入程序同目录的 ffmpeg_bin 文件夹")
         hint.setObjectName("info")
         hint.setWordWrap(True)
-        layout.addWidget(hint)
+        s_layout.addWidget(hint)
+        layout.addWidget(status_group)
 
         # 保存
         self.btn_save = QPushButton("💾 保存设置")
@@ -1814,6 +1853,10 @@ class SettingsTab(QWidget):
 
         # 信号
         self.btn_save.clicked.connect(self._save)
+
+        # 内容装入滚动区域后，再统一输入控件高度
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
         _fix_input_heights(self)
 
     def _check_nvenc(self):
@@ -1921,13 +1964,9 @@ def main():
     pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
     pal.setColor(QPalette.PlaceholderText, QColor("#94a3b8"))
     app.setPalette(pal)
-    # qt-material 基础层在前，完整组件样式在后（QSS 后者覆盖前者），风格统一
-    from qt_material import build_stylesheet
-    _base = getattr(sys, "_MEIPASS", None) or os.path.dirname(
-        os.path.abspath(__file__))
-    _theme = os.path.join(_base, "assets", "material_indigo.xml")
+    # 统一使用项目自带浅色主题 STYLE_SHEET（qt-material 与自定义 QSS 混用会导致部分容器渲染为黑色）
     icons = _gen_ui_icons()
-    style = build_stylesheet(_theme) + "\n" + STYLE_SHEET
+    style = STYLE_SHEET
     for key, path in icons.items():
         style = style.replace(key, path)
     app.setStyleSheet(style)

@@ -26,7 +26,12 @@ if exist dist rmdir /s /q dist
 if exist VideoTool.spec del VideoTool.spec
 echo.
 echo [4/4] Building exe...
-python -m PyInstaller --noconsole --onefile --name VideoTool --icon assets/icon.ico --add-data "assets;assets" --clean main.py
+if not exist ffmpeg_bin\ffmpeg.exe (
+    echo ffmpeg_bin\ffmpeg.exe not found! Run install_ffmpeg.bat first.
+    pause
+    exit /b 1
+)
+python -m PyInstaller --noconsole --onefile --name VideoTool --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --clean main.py
 if errorlevel 1 (
     echo Build failed!
     pause
