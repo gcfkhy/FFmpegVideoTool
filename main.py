@@ -278,6 +278,29 @@ QPushButton#themeToggle:hover {
     color: __ACCENT__;
 }
 
+/* === 功能平铺卡片（互斥选择） === */
+QPushButton#modeCard {
+    background-color: __BTN_BG__;
+    color: __TEXT_MUTED__;
+    border: 1px solid __BORDER__;
+    border-radius: __RADIUS__;
+    padding: 12px 10px;
+    min-height: 24px;
+    font-weight: 600;
+    font-size: 13px;
+}
+QPushButton#modeCard:hover {
+    border-color: __ACCENT__;
+    color: __TEXT__;
+    background-color: __HOVER_ITEM__;
+}
+QPushButton#modeCard:checked {
+    background-color: __ACCENT_SOFT2__;
+    border: 1px solid __ACCENT__;
+    color: __ACCENT__;
+    font-weight: 700;
+}
+
 /* === 按钮 === */
 QPushButton {
     background-color: __BTN_BG__;
@@ -1433,7 +1456,37 @@ class PdfTab(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
-        # 输入输出
+        # 处理功能：平铺直选卡片 + 对应参数
+        mode_group = QGroupBox("处理功能")
+        mv = QVBoxLayout(mode_group)
+        mv.setContentsMargins(0, 0, 0, 0)
+        mv.setSpacing(12)
+        self.mode_btns = []
+        self.mode_group_box = QButtonGroup(self)
+        self.mode_group_box.setExclusive(True)
+        cards = QHBoxLayout()
+        cards.setSpacing(10)
+        for i, name in enumerate(["Word 转 PDF", "PDF 权限限制",
+                                  "PDF 文字水印", "PDF 转图片并加水印"]):
+            btn = QPushButton(name)
+            btn.setObjectName("modeCard")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setMinimumHeight(44)
+            self.mode_group_box.addButton(btn, i)
+            cards.addWidget(btn, 1)
+            self.mode_btns.append(btn)
+        mv.addLayout(cards)
+        self.stack = QStackedWidget()
+        self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        mv.addWidget(self.stack)
+        self.stack.addWidget(self._build_word_page())
+        self.stack.addWidget(self._build_perm_page())
+        self.stack.addWidget(self._build_wm_page())
+        self.stack.addWidget(self._build_img_page())
+        layout.addWidget(mode_group)
+
+        # 输入输出（位于功能选择与参数下方）
         io_group = QGroupBox("输入 / 输出")
         g = QGridLayout(io_group)
         g.setContentsMargins(0, 0, 0, 0)
@@ -1458,24 +1511,6 @@ class PdfTab(QWidget):
         g.addWidget(self.lbl_out_hint, 2, 1, 1, 3)
         g.setColumnStretch(1, 1)
         layout.addWidget(io_group)
-
-        # 模式与参数
-        mode_group = QGroupBox("处理模式")
-        mv = QVBoxLayout(mode_group)
-        mv.setContentsMargins(0, 0, 0, 0)
-        mv.setSpacing(12)
-        self.cmb_mode = QComboBox()
-        self.cmb_mode.addItems(["Word 转 PDF", "PDF 权限限制",
-                                 "PDF 文字水印", "PDF 转图片并加水印"])
-        mv.addWidget(self.cmb_mode)
-        self.stack = QStackedWidget()
-        self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        mv.addWidget(self.stack)
-        self.stack.addWidget(self._build_word_page())
-        self.stack.addWidget(self._build_perm_page())
-        self.stack.addWidget(self._build_wm_page())
-        self.stack.addWidget(self._build_img_page())
-        layout.addWidget(mode_group)
 
         # 开始按钮 + 取消按钮
         btn_row = QHBoxLayout()
@@ -1507,9 +1542,10 @@ class PdfTab(QWidget):
         self.btn_browse_out.clicked.connect(self._browse_out)
         self.btn_start.clicked.connect(self._start)
         self.btn_cancel.clicked.connect(self._cancel)
-        self.cmb_mode.currentIndexChanged.connect(self._on_mode_changed)
+        self.mode_group_box.idClicked.connect(self._on_mode_changed)
         self.txt_input.file_dropped.connect(
             lambda p: self.txt_input.setText(p))
+        self.mode_btns[0].setChecked(True)
         self._on_mode_changed(0)
         _fix_input_heights(content)
 
@@ -1659,6 +1695,10 @@ class PdfTab(QWidget):
         g.setColumnStretch(1, 1)
         return page
 
+    def _current_mode(self):
+        btn = self.mode_group_box.checkedButton()
+        return self.mode_btns.index(btn) if btn else self.MODE_WORD
+
     def _on_mode_changed(self, idx):
         self.stack.setCurrentIndex(idx)
         hints = {
@@ -1677,7 +1717,7 @@ class PdfTab(QWidget):
     def _browse_file(self):
         last_dir = self.config.get("last_output_dir", "")
         flt = ("Word 文件 (*.docx *.doc);;所有文件 (*)"
-               if self.cmb_mode.currentIndex() == self.MODE_WORD
+               if self._current_mode() == self.MODE_WORD
                else "PDF 文件 (*.pdf);;所有文件 (*)")
         files, _ = QFileDialog.getOpenFileNames(self, "选择文件", last_dir, flt)
         if files:
@@ -1696,7 +1736,7 @@ class PdfTab(QWidget):
         return [src]
 
     def _start(self):
-        mode = self.cmb_mode.currentIndex()
+        mode = self._current_mode()
         exts = DOC_EXTS if mode == self.MODE_WORD else PDF_EXTS
         files = collect_files(self._collect_inputs(), exts)
         if not files:
