@@ -246,7 +246,7 @@ def set_pdf_permissions(files, out_dir="", password="", allow_print=False,
                 writer.add_page(page)
             writer.encrypt(
                 user_password="",
-                owner_password=password or "37259F97D4BC8CC4412B1E484E0A4F96",
+                owner_password=password or "1234567890",
                 permissions_flag=flag,
             )
             with open(out, "wb") as f:
@@ -286,7 +286,7 @@ def _draw_watermark_pdf(text, font, page_w, page_h, rows, cols, font_size,
     return PdfReader(packet)
 
 
-def add_text_watermark(files, out_dir="", text="杭州喜马拉雅", font=None,
+def add_text_watermark(files, out_dir="", text="示例水印文字", font=None,
                        rows=5, cols=3, font_size=18, opacity=0.2, angle=35,
                        report=None, should_cancel=None, log=None):
     """为 PDF 添加平铺文字水印（保留文字可选中等特性）"""
@@ -346,7 +346,7 @@ def _tile_watermark_on_image(img, text, font, rows, cols, font_size,
     return Image.alpha_composite(img.convert("RGBA"), watermark).convert("RGB")
 
 
-def convert_to_image_pdf(files, out_dir="", text="杭州喜马拉雅", font=None,
+def convert_to_image_pdf(files, out_dir="", text="示例水印文字", font=None,
                          rows=5, cols=2, font_size=36, opacity=0.3, angle=35,
                          zoom=1.5, quality=85,
                          report=None, should_cancel=None, log=None):

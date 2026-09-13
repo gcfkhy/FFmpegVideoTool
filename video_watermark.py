@@ -131,7 +131,7 @@ def generate_positions(duration, frequency_factor=7, height=1080):
 
 
 def build_command(ffmpeg, input_path, output_path, font, probe,
-                  text="杭州喜马拉雅", color="#FF0000", fontsize=40,
+                  text="示例水印文字", color="#FF0000", fontsize=40,
                   alpha=0.3, frequency_factor=7, video_bitrate_k=2000,
                   audio_bitrate_k=192, codec="hevc_nvenc", use_nvenc=True,
                   marked=True):
