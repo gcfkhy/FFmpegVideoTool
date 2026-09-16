@@ -32,7 +32,7 @@ if not exist ffmpeg_bin\ffmpeg.exe (
     pause
     exit /b 1
 )
-python -m PyInstaller --noconsole --onefile --name MediaKit --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --clean main.py
+python -m PyInstaller --noconsole --onefile --name MediaKit --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --add-data "msyh.ttc;." --clean main.py
 if errorlevel 1 (
     echo Build failed!
     pause

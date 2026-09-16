@@ -4,7 +4,7 @@
 移植自 D:\\word转pdf 的 VideoWatermark.py / VideoWatermarkNewFile.py /
 VideoZIP.py 三个重复实现，保留共同行为并优化：
 - 水印按随机时间出现（每段 5 秒，从左向右飘过），位置纵向随机
-- 通过写入 comment=LinLong 元数据标记已处理文件，避免重复加水印
+- 通过写入 comment=MediaKit 元数据标记已处理文件，避免重复加水印
 - 输出方式可选：替换原文件 或 另存新文件
 - 去除 eval()、numpy 依赖；drawtext 参数做转义处理
 - 编码器复用主程序设置（NVENC 硬件加速 / 软编）
@@ -19,7 +19,8 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from ffmpeg_core import NO_WINDOW  # 复用隐藏控制台窗口常量
 
-MARKER = "LinLong"  # 已加水印的元数据标记
+MARKER = "MediaKit"  # 已加水印的元数据标记
+LEGACY_MARKERS = {"LinLong"}  # 兼容旧版本写入的标记
 VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".ts", ".wmv")
 
 
@@ -102,8 +103,8 @@ def probe_video(ffprobe, path):
 
 
 def is_marked(probe):
-    """是否已加水印（按元数据标记判断）"""
-    return bool(probe) and probe.get("comment") == MARKER
+    """是否已加水印（按元数据标记判断，兼容旧版本标记）"""
+    return bool(probe) and probe.get("comment") in ({MARKER} | LEGACY_MARKERS)
 
 
 def _target_size(width, height, max_w=1920, max_h=1080):

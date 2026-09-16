@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 
 
@@ -31,6 +32,9 @@ class Config:
 
     def __init__(self):
         self._appdata_dir = os.path.join(
+            os.environ.get("APPDATA", ""), "MediaKit"
+        )
+        self._legacy_appdata_dir = os.path.join(
             os.environ.get("APPDATA", ""), "FFmpegVideoTool"
         )
         self.data = self._load()
@@ -43,6 +47,24 @@ class Config:
         if self._is_portable():
             exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
             return os.path.join(exe_dir, "config.json")
+        # 兼容更名前的旧版：首次运行时迁移旧配置
+        new_cfg = os.path.join(self._appdata_dir, "config.json")
+        legacy_cfg = os.path.join(self._legacy_appdata_dir, "config.json")
+        if not os.path.exists(new_cfg) and os.path.exists(legacy_cfg):
+            os.makedirs(self._appdata_dir, exist_ok=True)
+            try:
+                shutil.copy(legacy_cfg, new_cfg)
+            except Exception:
+                pass
+        # 兼容更名前的旧版：首次运行时迁移旧配置
+        new_cfg = os.path.join(self._appdata_dir, "config.json")
+        legacy_cfg = os.path.join(self._legacy_appdata_dir, "config.json")
+        if not os.path.exists(new_cfg) and os.path.exists(legacy_cfg):
+            os.makedirs(self._appdata_dir, exist_ok=True)
+            try:
+                shutil.copy(legacy_cfg, new_cfg)
+            except Exception:
+                pass
         os.makedirs(self._appdata_dir, exist_ok=True)
         return os.path.join(self._appdata_dir, "config.json")
 
