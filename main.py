@@ -696,13 +696,63 @@ def _apply_palette(app, theme):
 
 def apply_app_theme(app, name):
     """应用浅色或深色主题，并刷新图标。"""
+    global UI_THEME
     if name not in THEMES:
         name = "light"
+    UI_THEME = name
     theme = THEMES[name]
     icons = _gen_ui_icons(theme)
     _apply_palette(app, theme)
     app.setStyleSheet(_render_style(theme, icons))
     return name, icons
+
+
+UI_THEME = "light"
+
+
+def _dialog_style(theme):
+    """弹窗专用样式：显式覆盖 top-level 背景，避免 Windows 深色模式擦除成黑底。"""
+    return (
+        "QMessageBox { background-color: %s; }\n"
+        "QMessageBox QLabel { color: %s; background: transparent; }\n"
+        "QMessageBox QPushButton { background-color: %s; color: %s; "
+        "border: 1px solid %s; border-radius: 6px; padding: 7px 18px; min-width: 64px; }\n"
+        "QMessageBox QPushButton:hover { background-color: %s; }\n"
+        "QMessageBox QPushButton:default { border: 1px solid %s; }"
+        % (
+            theme["CARD"], theme["TEXT"], theme["BTN_BG"], theme["BTN_TEXT"],
+            theme["BORDER"], theme["BTN_HOVER"], theme["ACCENT"],
+        )
+    )
+
+
+def _style_dialog(box):
+    theme = THEMES[UI_THEME]
+    pal = box.palette()
+    pal.setColor(QPalette.Window, QColor(theme["CARD"]))
+    pal.setColor(QPalette.WindowText, QColor(theme["TEXT"]))
+    pal.setColor(QPalette.Text, QColor(theme["TEXT"]))
+    pal.setColor(QPalette.Button, QColor(theme["BTN_BG"]))
+    pal.setColor(QPalette.ButtonText, QColor(theme["BTN_TEXT"]))
+    box.setPalette(pal)
+    box.setStyleSheet(_dialog_style(theme))
+    return box
+
+
+def msg_info(parent, title, text):
+    return _style_dialog(QMessageBox(
+        QMessageBox.Information, title, text, QMessageBox.Ok, parent)).exec_()
+
+
+def msg_warn(parent, title, text):
+    return _style_dialog(QMessageBox(
+        QMessageBox.Warning, title, text, QMessageBox.Ok, parent)).exec_()
+
+
+def msg_question(parent, title, text,
+                 buttons=QMessageBox.Yes | QMessageBox.No):
+    return _style_dialog(QMessageBox(
+        QMessageBox.Question, title, text, buttons, parent)).exec_()
 
 
 # ==================== 自定义控件 ====================
@@ -1050,15 +1100,15 @@ class MergeTab(QWidget):
         paths = [self.file_list.item(i).data(Qt.UserRole)
                  for i in range(self.file_list.count())]
         if len(paths) < 2:
-            QMessageBox.warning(self, "提示", "请至少添加 2 个文件")
+            msg_warn(self, "提示", "请至少添加 2 个文件")
             return
         output = self.txt_output.text().strip()
         if not output:
-            QMessageBox.warning(self, "提示", "请选择输出文件")
+            msg_warn(self, "提示", "请选择输出文件")
             return
         ff_path = self.config.get("ffmpeg_path", "")
         if not ff_path or not os.path.exists(ff_path):
-            QMessageBox.warning(self, "提示", "未找到可用的 FFmpeg")
+            msg_warn(self, "提示", "未找到可用的 FFmpeg")
             return
 
         ff = self._get_ff()
@@ -1107,9 +1157,9 @@ class MergeTab(QWidget):
         self.btn_cancel.setText("取消")
         if success:
             self.progress.setValue(100)
-            QMessageBox.information(self, "成功", f"合并完成\n{msg}")
+            msg_info(self, "成功", f"合并完成\n{msg}")
         else:
-            QMessageBox.warning(self, "失败", f"合并失败\n{msg}")
+            msg_warn(self, "失败", f"合并失败\n{msg}")
 
 
 # ==================== 压缩页签 ====================
@@ -1352,7 +1402,7 @@ class CompressTab(QWidget):
     def _start_compress(self):
         input_path = self.txt_input.text().strip()
         if not input_path or not os.path.exists(input_path):
-            QMessageBox.warning(self, "提示", "请选择有效的源文件")
+            msg_warn(self, "提示", "请选择有效的源文件")
             return
         output = self.txt_output.text().strip()
         if not output:
@@ -1362,13 +1412,13 @@ class CompressTab(QWidget):
             self.txt_output.setText(output)
         ff_path = self.config.get("ffmpeg_path", "")
         if not ff_path or not os.path.exists(ff_path):
-            QMessageBox.warning(self, "提示", "未找到可用的 FFmpeg")
+            msg_warn(self, "提示", "未找到可用的 FFmpeg")
             return
 
         if not self.file_info:
             self._probe_file(input_path)
         if not self.file_info or self.file_info["duration"] <= 0:
-            QMessageBox.warning(self, "提示", "无法读取文件信息")
+            msg_warn(self, "提示", "无法读取文件信息")
             return
 
         target_mb = self._get_target_size_mb()
@@ -1426,9 +1476,9 @@ class CompressTab(QWidget):
         self.btn_cancel.setText("取消")
         if success:
             self.progress.setValue(100)
-            QMessageBox.information(self, "成功", f"压缩完成\n{msg}")
+            msg_info(self, "成功", f"压缩完成\n{msg}")
         else:
-            QMessageBox.warning(self, "失败", f"压缩失败\n{msg}")
+            msg_warn(self, "失败", f"压缩失败\n{msg}")
 
 
 # ==================== PDF 工具页签 ====================
@@ -1740,7 +1790,7 @@ class PdfTab(QWidget):
         exts = DOC_EXTS if mode == self.MODE_WORD else PDF_EXTS
         files = collect_files(self._collect_inputs(), exts)
         if not files:
-            QMessageBox.warning(self, "提示", "未找到待处理的文件")
+            msg_warn(self, "提示", "未找到待处理的文件")
             return
         out_dir = self.txt_output.text().strip()
 
@@ -1805,9 +1855,9 @@ class PdfTab(QWidget):
         self.btn_cancel.setText("取消")
         if success:
             self.progress.setValue(100)
-            QMessageBox.information(self, "成功", msg)
+            msg_info(self, "成功", msg)
         else:
-            QMessageBox.warning(self, "失败", msg)
+            msg_warn(self, "失败", msg)
 
 
 # ==================== 视频水印页签 ====================
@@ -1978,12 +2028,12 @@ class WatermarkTab(QWidget):
         files = [self.file_list.item(i).data(Qt.UserRole)
                  for i in range(self.file_list.count())]
         if not files:
-            QMessageBox.warning(self, "提示", "请先添加视频文件")
+            msg_warn(self, "提示", "请先添加视频文件")
             return
         ffmpeg = self.config.get("ffmpeg_path", "")
         ffprobe = self.config.get("ffprobe_path", "")
         if not ffmpeg or not os.path.exists(ffmpeg):
-            QMessageBox.warning(self, "提示", "未找到可用的 FFmpeg")
+            msg_warn(self, "提示", "未找到可用的 FFmpeg")
             return
 
         as_new = self.cmb_output.currentIndex() == 1
@@ -2014,13 +2064,13 @@ class WatermarkTab(QWidget):
             jobs.append((f, temp, not as_new, cmd, dur))
 
         if not jobs:
-            QMessageBox.information(
+            msg_info(
                 self, "提示", "没有需要处理的文件"
                 + (f"（跳过 {skipped} 个）" if skipped else ""))
             return
 
         if not as_new:
-            ret = QMessageBox.question(
+            ret = msg_question(
                 self, "确认",
                 f"将替换 {len(jobs)} 个原视频文件（不可恢复），是否继续？",
                 QMessageBox.Yes | QMessageBox.No)
@@ -2058,9 +2108,9 @@ class WatermarkTab(QWidget):
         self.status_bar.showMessage("")
         if success:
             self.progress.setValue(100)
-            QMessageBox.information(self, "成功", msg)
+            msg_info(self, "成功", msg)
         else:
-            QMessageBox.warning(self, "失败", msg)
+            msg_warn(self, "失败", msg)
 
 
 # ==================== 设置页签 ====================
@@ -2191,7 +2241,7 @@ class SettingsTab(QWidget):
         self.config.set("default_codec", codec_map.get(self.cmb_codec.currentIndex(), "hevc_nvenc"))
         self.config.set("default_audio_bitrate", self.spn_audio.value())
         self.config.set("use_nvenc", self.chk_nvenc.isChecked())
-        QMessageBox.information(self, "成功", "设置已保存")
+        msg_info(self, "成功", "设置已保存")
 
 
 # ==================== 左侧导航 ====================
