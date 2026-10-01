@@ -14,7 +14,7 @@ def _exe_dir():
 def _bundled_ffmpeg(name):
     """定位随包分发的 ffmpeg 可执行文件。
 
-    优先级：exe 同目录 ffmpeg_bin（便于用户替换升级）> PyInstaller 单文件解包目录（exe 内置）。
+    优先级：exe 同目录 ffmpeg_bin（便于用户替换升级）> 打包目录里的内置副本。
     """
     p = os.path.join(_exe_dir(), "ffmpeg_bin", name)
     if os.path.exists(p):
