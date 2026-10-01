@@ -13,7 +13,7 @@ if errorlevel 1 (
 )
 echo.
 echo [2/4] Generating icon...
-python -c "from PIL import Image; img=Image.open('assets/icon.jpg'); sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)]; icons=[img.resize(s, Image.Resampling.LANCZOS) for s in sizes]; icons[0].save('assets/icon.ico', format='ICO', sizes=[(s[0],s[1]) for s in sizes])"
+python -c "from PIL import Image; img=Image.open('assets/icon.jpg').convert('RGBA'); sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(96,96),(128,128),(256,256)]; icons=[img.resize(s, Image.Resampling.LANCZOS) for s in sizes]; icons[-1].save('assets/icon.ico', format='ICO', sizes=sizes, append_images=icons[:-1])"
 if errorlevel 1 (
     echo Icon generation failed!
     pause
