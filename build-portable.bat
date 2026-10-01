@@ -1,6 +1,5 @@
 @echo off
 cd /d "%~dp0"
-chcp 65001 >nul
 echo ========================================
 echo   MediaKit 便携版
 echo   目录直接运行，启动较快

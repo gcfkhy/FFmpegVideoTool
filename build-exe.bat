@@ -1,6 +1,5 @@
 @echo off
 cd /d "%~dp0"
-chcp 65001 >nul
 echo ========================================
 echo   MediaKit 单个 exe
 echo   每次启动会先解压，打开较慢

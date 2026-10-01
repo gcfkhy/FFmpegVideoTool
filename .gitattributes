@@ -1,0 +1,3 @@
+build.bat text working-tree-encoding=GBK eol=crlf
+build-exe.bat text working-tree-encoding=GBK eol=crlf
+build-portable.bat text working-tree-encoding=GBK eol=crlf
