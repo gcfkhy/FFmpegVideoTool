@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit, QGroupBox, QFileDialog, QMessageBox, QAbstractItemView,
     QStatusBar, QScrollArea, QStackedWidget, QButtonGroup, QSizePolicy
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QSize, QTimer
 from PyQt5.QtGui import QPalette, QColor, QIcon
 
 from config import Config
@@ -2331,6 +2331,64 @@ class NavRail(QWidget):
             self.lbl_ff.setText("未找到 FFmpeg")
 
 
+def _asset_path(name):
+    """打包后资源在解包目录，开发时在源码目录。"""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "assets", name)
+
+
+def _window_icon():
+    jpg = _asset_path("icon.jpg")
+    ico = _asset_path("icon.ico")
+    if os.path.exists(jpg):
+        icon = QIcon(jpg)
+        if not icon.isNull():
+            return icon
+    if os.path.exists(ico):
+        return QIcon(ico)
+    return QIcon()
+
+
+def _install_windows_frame_icon(widget):
+    """任务栏用的是窗口图标，不是 exe 文件里的图标资源。
+
+    Qt 只会按系统小图标尺寸生成一张 HICON，Windows 再拉到任务栏就会发糊。
+    这里改成装入 256 的图标，让系统缩小。
+    """
+    if sys.platform != "win32":
+        return
+    ico = _asset_path("icon.ico")
+    if not os.path.exists(ico):
+        return
+    import ctypes
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.LoadImageW.argtypes = [
+        ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint,
+        ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+    ]
+    user32.LoadImageW.restype = ctypes.c_void_p
+    user32.SendMessageW.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p,
+    ]
+    user32.SendMessageW.restype = ctypes.c_void_p
+    user32.DestroyIcon.argtypes = [ctypes.c_void_p]
+    user32.DestroyIcon.restype = ctypes.c_int
+
+    hicon = user32.LoadImageW(None, ico, 1, 256, 256, 0x0010)
+    if not hicon:
+        return
+    hwnd = int(widget.winId())
+    user32.SendMessageW(hwnd, 0x0080, 0, hicon)
+    user32.SendMessageW(hwnd, 0x0080, 1, hicon)
+    old = getattr(widget, "_frame_hicon", None)
+    widget._frame_hicon = hicon
+    if old and old != hicon:
+        user32.DestroyIcon(old)
+
+
 # ==================== 主窗口 ====================
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -2340,12 +2398,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(920, 680)
         self.resize(1040, 760)
-
-        icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.ico")
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.jpg")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        self.setWindowIcon(_window_icon())
 
         root = QWidget()
         root.setObjectName("pageContent")
@@ -2381,6 +2434,10 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("未找到可用的 FFmpeg")
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, lambda: _install_windows_frame_icon(self))
+
     def _toggle_theme(self):
         self.set_theme("light" if self._theme == "dark" else "dark")
 
@@ -2407,6 +2464,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setWindowIcon(_window_icon())
     config = Config()
     apply_app_theme(app, config.get("theme", "light"))
     window = MainWindow()
