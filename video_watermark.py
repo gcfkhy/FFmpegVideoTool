@@ -6,22 +6,32 @@ VideoZIP.py 三个重复实现，保留共同行为并优化：
 - 水印按随机时间出现（每段 5 秒，从左向右飘过），位置纵向随机
 - 通过写入 comment=MediaKit 元数据标记已处理文件，避免重复加水印
 - 输出方式可选：替换原文件 或 另存新文件
-- 去除 eval()、numpy 依赖；drawtext 参数做转义处理
+- 水印烧录改用 ASS（一条 subtitles 滤镜），避免上百条 drawtext
 - 编码器复用主程序设置（NVENC 硬件加速 / 软编）
 """
 import os
 import re
 import json
 import random
+import tempfile
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from ffmpeg_core import NO_WINDOW  # 复用隐藏控制台窗口常量
+from ffmpeg_core import (
+    NO_WINDOW,
+    audio_encode_args,
+    escape_filter_path,
+    hwaccel_prefix,
+    video_encode_args,
+)
 
 MARKER = "MediaKit"  # 已加水印的元数据标记
 LEGACY_MARKERS = {"LinLong"}  # 兼容旧版本写入的标记
 VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".ts", ".wmv")
+ASS_FONT_NAME = "Microsoft YaHei"
+WATERMARK_HOLD = 5.0
 
 
 def collect_videos(paths):
@@ -45,25 +55,13 @@ def collect_videos(paths):
     return unique
 
 
-def _ff_escape_path(path):
-    """转义 drawtext fontfile 的 Windows 路径（盘符冒号需转义）"""
-    p = path.replace("\\", "/").replace(":", "\\:")
-    return f"'{p}'"
-
-
-def _ff_escape_text(text):
-    """转义 drawtext 文本中的特殊字符"""
-    for ch in ("\\", "'", ":", "%"):
-        text = text.replace(ch, "\\" + ch)
-    return text
-
-
 def probe_video(ffprobe, path):
-    """获取视频分辨率/帧率/时长/comment 标记"""
+    """获取视频分辨率/帧率/时长/comment 标记/音频编码"""
     cmd = [
-        ffprobe, "-v", "error", "-select_streams", "v:0",
+        ffprobe, "-v", "error",
         "-show_entries",
-        "stream=width,height,r_frame_rate:format=duration:format_tags=comment",
+        "stream=codec_type,codec_name,width,height,r_frame_rate,"
+        "sample_rate,channels:format=duration:format_tags=comment",
         "-of", "json", path,
     ]
     try:
@@ -74,32 +72,53 @@ def probe_video(ffprobe, path):
         if result.returncode != 0:
             return None
         info = json.loads(result.stdout)
-        stream = (info.get("streams") or [None])[0]
-        if not stream:
+        streams = info.get("streams") or []
+        v_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+        a_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        if not v_stream:
             return None
-        width = int(stream.get("width", 0))
-        height = int(stream.get("height", 0))
+        width = int(v_stream.get("width", 0) or 0)
+        height = int(v_stream.get("height", 0) or 0)
         if width <= 0 or height <= 0:
             return None
-        # 帧率形如 "30000/1001"
         fps = 0.0
-        rate = stream.get("r_frame_rate", "0/1")
+        rate = v_stream.get("r_frame_rate", "0/1")
         try:
             num, _, den = rate.partition("/")
             fps = float(num) / float(den or 1)
         except Exception:
             pass
         try:
-            duration = float(info.get("format", {}).get("duration", 0))
+            duration = float(info.get("format", {}).get("duration", 0) or 0)
         except (TypeError, ValueError):
             duration = 0.0
-        comment = info.get("format", {}).get("tags", {}).get("comment", "")
+        tags = info.get("format", {}).get("tags") or {}
+        comment = tags.get("comment", "")
         return {
             "width": width, "height": height,
+            "codec": v_stream.get("codec_name", "") or "",
             "fps": fps, "duration": duration, "comment": comment.strip(),
+            "audio": {
+                "codec": a_stream.get("codec_name", "") if a_stream else "",
+                "sample_rate": int(a_stream.get("sample_rate", 0) or 0) if a_stream else 0,
+                "channels": int(a_stream.get("channels", 0) or 0) if a_stream else 0,
+            },
         }
     except Exception:
         return None
+
+
+def probe_videos(ffprobe, files, max_workers=8):
+    """并行探测，返回与 files 等长的 probe 列表。"""
+    if not files:
+        return []
+    results = [None] * len(files)
+    workers = max(1, min(max_workers, len(files)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(probe_video, ffprobe, f): i for i, f in enumerate(files)}
+        for fut in as_completed(futs):
+            results[futs[fut]] = fut.result()
+    return results
 
 
 def is_marked(probe):
@@ -121,7 +140,7 @@ def generate_positions(duration, frequency_factor=7, height=1080):
     interval = max(30, min(180, 180 / max(frequency_factor, 1)))
     current = 0.0
     while current < duration:
-        # 末段由 enable=between 自然截断，短视频也保证 t=0 处出现一次
+        # 末段由结束时间截断，短视频也保证 t=0 处出现一次
         if random.random() < 0.7:
             y = random.randint(int(0.40 * height), int(0.59 * height))
         else:
@@ -131,38 +150,136 @@ def generate_positions(duration, frequency_factor=7, height=1080):
     return positions
 
 
+def _ass_time(seconds):
+    seconds = max(0.0, float(seconds))
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _ass_escape(text):
+    return (text.replace("\\", r"\\")
+                .replace("{", r"\{")
+                .replace("}", r"\}")
+                .replace("\n", r"\N"))
+
+
+def _css_to_ass_color(hex_color, alpha):
+    """#RRGGBB + 不透明度 0-1 → ASS &HAABBGGRR（AA=00 不透明）。"""
+    color = (hex_color or "#FF0000").lstrip("#")
+    if len(color) == 3:
+        color = "".join(ch * 2 for ch in color)
+    if len(color) != 6:
+        color = "FF0000"
+    try:
+        r = int(color[0:2], 16)
+        g = int(color[2:4], 16)
+        b = int(color[4:6], 16)
+    except ValueError:
+        r, g, b = 255, 0, 0
+    a = int(round((1.0 - max(0.0, min(1.0, float(alpha)))) * 255))
+    return f"&H{a:02X}{b:02X}{g:02X}{r:02X}"
+
+
+def _text_width_px(font_path, text, fontsize):
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(font_path, fontsize)
+        if hasattr(font, "getbbox"):
+            bbox = font.getbbox(text)
+            return max(bbox[2] - bbox[0], 1)
+        return max(int(fontsize * len(text)), 1)
+    except Exception:
+        width = 0
+        for ch in text:
+            width += fontsize if ord(ch) > 127 else int(fontsize * 0.55)
+        return max(width, 1)
+
+
+def build_ass(width, height, duration, font_path, text, color, fontsize, alpha,
+              frequency_factor):
+    """生成与旧 drawtext 行为一致的 ASS 字幕文本。"""
+    positions = generate_positions(duration, frequency_factor, height)
+    primary = _css_to_ass_color(color, alpha)
+    text_w = _text_width_px(font_path, text, fontsize)
+    end_x = max(0, int(width - text_w))
+    escaped = _ass_escape(text)
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        f"PlayResX: {int(width)}",
+        f"PlayResY: {int(height)}",
+        "WrapStyle: 2",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: WM,{ASS_FONT_NAME},{int(fontsize)},{primary},"
+        "&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for start, y in positions:
+        end = min(start + WATERMARK_HOLD, duration if duration > 0 else start + WATERMARK_HOLD)
+        if end <= start:
+            continue
+        y = max(0, int(y))
+        lines.append(
+            f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},WM,,0,0,0,,"
+            f"{{\\move(0,{y},{end_x},{y})}}{escaped}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def write_ass_file(content):
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ass", delete=False, encoding="utf-8"
+    )
+    handle.write(content)
+    handle.close()
+    return handle.name
+
+
 def build_command(ffmpeg, input_path, output_path, font, probe,
                   text="示例水印文字", color="#FF0000", fontsize=40,
                   alpha=0.3, frequency_factor=7, video_bitrate_k=2000,
                   audio_bitrate_k=192, codec="hevc_nvenc", use_nvenc=True,
-                  marked=True):
-    """构建加水印的 ffmpeg 命令，返回 (cmd, duration)"""
+                  marked=True, speed="balanced"):
+    """构建加水印的 ffmpeg 命令，返回 (cmd, duration, extra_temps)"""
     width, height = probe["width"], probe["height"]
     new_w, new_h = _target_size(width, height)
+    ass_text = build_ass(
+        new_w, new_h, probe["duration"], font, text, color, fontsize,
+        alpha, frequency_factor,
+    )
+    ass_path = write_ass_file(ass_text)
+    fontsdir = os.path.dirname(os.path.abspath(font)) if font else ""
     filters = []
     if (new_w, new_h) != (width, height):
         filters.append(f"scale={new_w}:{new_h}")
-    for start, y in generate_positions(probe["duration"], frequency_factor, new_h):
-        filters.append(
-            f"drawtext=fontfile={_ff_escape_path(font)}:"
-            f"text='{_ff_escape_text(text)}':"
-            f"fontcolor={color}:fontsize={fontsize}:alpha={alpha}:"
-            f"x='if(between(t,{start},{start + 5}),(w-text_w)*(t-{start})/5,NAN)':"
-            f"y={y}"
-        )
-    cmd = [ffmpeg, "-y", "-i", input_path]
+    sub = f"subtitles=f={escape_filter_path(ass_path)}"
+    if fontsdir:
+        sub += f":fontsdir={escape_filter_path(fontsdir)}"
+    filters.append(sub)
+
+    cmd = [ffmpeg, "-y"]
+    cmd.extend(hwaccel_prefix(
+        use_nvenc, keep_on_gpu=False, vcodec=probe.get("codec")))
+    cmd.extend(["-i", input_path])
     if marked:
         cmd.extend(["-metadata", f"comment={MARKER}"])
     if filters:
         cmd.extend(["-vf", ",".join(filters)])
-    cmd.extend(["-c:v", codec, "-b:v", f"{video_bitrate_k}k"])
-    if use_nvenc:
-        cmd.extend(["-preset", "p6", "-tune", "hq", "-rc", "vbr"])
-    else:
-        cmd.extend(["-preset", "medium"])
-    cmd.extend(["-c:a", "aac", "-b:a", f"{audio_bitrate_k}k"])
+    cmd.extend(video_encode_args(
+        codec, use_nvenc, speed, bitrate_k=video_bitrate_k))
+    cmd.extend(audio_encode_args(probe.get("audio"), audio_bitrate_k))
     cmd.append(output_path)
-    return cmd, probe["duration"]
+    return cmd, probe["duration"], [ass_path]
 
 
 def suggest_output(input_path, as_new_file):
@@ -182,7 +299,7 @@ class VideoWatermarkWorker(QThread):
     finished_signal = pyqtSignal(bool, str)
 
     def __init__(self, jobs, parent=None):
-        """jobs: [(input_path, temp_path, replace, cmd, duration), ...]"""
+        """jobs: [(input_path, temp_path, replace, cmd, duration, extra_temps), ...]"""
         super().__init__(parent)
         self.jobs = jobs
         self._cancelled = False
@@ -196,7 +313,7 @@ class VideoWatermarkWorker(QThread):
             except Exception:
                 pass
 
-    def _run_one(self, idx, input_path, temp_path, replace, cmd, duration):
+    def _run_one(self, idx, input_path, temp_path, replace, cmd, duration, extra_temps):
         total = len(self.jobs)
         self.log.emit(f"({idx + 1}/{total}) {input_path}")
         self.log.emit("命令: " + " ".join(
@@ -226,6 +343,7 @@ class VideoWatermarkWorker(QThread):
             process.wait()
         finally:
             self._process = None
+            self._cleanup_temps(extra_temps)
         if self._cancelled:
             self._cleanup_temp(temp_path, input_path)
             return False
@@ -247,18 +365,29 @@ class VideoWatermarkWorker(QThread):
         except Exception:
             pass
 
+    @staticmethod
+    def _cleanup_temps(paths):
+        for path in paths or []:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
+
     def run(self):
         done = 0
-        for idx, (input_path, temp_path, replace, cmd,
-                  duration) in enumerate(self.jobs):
+        for idx, job in enumerate(self.jobs):
             if self._cancelled:
                 break
+            input_path, temp_path, replace, cmd, duration = job[:5]
+            extra_temps = job[5] if len(job) > 5 else []
             try:
                 if self._run_one(idx, input_path, temp_path, replace, cmd,
-                                 duration):
+                                 duration, extra_temps):
                     done += 1
             except Exception as e:
                 self.log.emit(f"✗ 异常: {e}")
+                self._cleanup_temps(extra_temps)
         if self._cancelled:
             self.finished_signal.emit(False, "已取消")
         else:

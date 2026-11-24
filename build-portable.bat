@@ -1,12 +1,12 @@
 @echo off
 cd /d "%~dp0"
 echo ========================================
-echo   MediaKit 便携版
-echo   目录直接运行，启动较快
+echo   MediaKit 锟斤拷携锟斤拷
+echo   目录直锟斤拷锟斤拷锟叫ｏ拷锟斤拷锟斤拷锟较匡拷
 echo ========================================
 echo.
 echo [1/4] Checking dependencies...
-pip install PyQt5 PyInstaller Pillow -q
+pip install PyQt5 PyInstaller Pillow pypdf pymupdf reportlab pywin32 -q
 if errorlevel 1 (
     echo Dependency install failed!
     pause
@@ -14,7 +14,7 @@ if errorlevel 1 (
 )
 echo.
 echo [2/4] Generating icon...
-python -c "from PIL import Image; img=Image.open('assets/icon.jpg').convert('RGBA'); sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(96,96),(128,128),(256,256)]; icons=[img.resize(s, Image.Resampling.LANCZOS) for s in sizes]; icons[-1].save('assets/icon.ico', format='ICO', sizes=sizes, append_images=icons[:-1])"
+python make_icon.py
 if errorlevel 1 (
     echo Icon generation failed!
     pause
@@ -33,7 +33,7 @@ if not exist ffmpeg_bin\ffmpeg.exe (
     pause
     exit /b 1
 )
-python -m PyInstaller --noconsole --onedir --noupx --name MediaKit --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --add-data "msyh.ttc;." --clean main.py
+python -m PyInstaller --noconsole --onedir --noupx --name MediaKit --icon assets/icon.ico --add-data "assets;assets" --add-data "ffmpeg_bin;ffmpeg_bin" --add-data "msyh.ttc;." --hidden-import pypdf --hidden-import pypdf.constants --hidden-import PyPDF2 --hidden-import pymupdf --hidden-import fitz --hidden-import reportlab --hidden-import reportlab.pdfgen.canvas --hidden-import reportlab.pdfbase._fontdata --hidden-import PIL --hidden-import win32com --hidden-import win32com.client --hidden-import pythoncom --clean main.py
 if errorlevel 1 (
     echo Build failed!
     pause
@@ -43,6 +43,6 @@ echo.
 echo ========================================
 echo   Build complete!
 echo   Output: dist\MediaKit\MediaKit.exe
-echo   请保留整个 dist\MediaKit 文件夹
+echo   锟诫保锟斤拷锟斤拷锟斤拷 dist\MediaKit 锟侥硷拷锟斤拷
 echo ========================================
 pause

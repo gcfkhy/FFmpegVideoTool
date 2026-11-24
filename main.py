@@ -1,5 +1,6 @@
 import sys
 import os
+import shutil
 import tempfile
 
 # 必须在导入 PyQt5 之前设置
@@ -19,13 +20,22 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread, QSize, QTimer
 from PyQt5.QtGui import QPalette, QColor, QIcon
 
 from config import Config
-from ffmpeg_core import FFmpegWrapper, FileSorter, FFmpegWorker
+from ffmpeg_core import (
+    FFmpegWrapper, FileSorter, FFmpegWorker,
+    SPEED_LABELS, speed_index, speed_key_at,
+)
 from pdf_tools import (PdfWorker, DOC_EXTS, PDF_EXTS, font_path,
                        collect_files, word_to_pdf, set_pdf_permissions,
                        add_text_watermark, convert_to_image_pdf)
 from video_watermark import (VideoWatermarkWorker, collect_videos,
-                             probe_video, is_marked, build_command,
+                             probe_videos, is_marked, build_command,
                              suggest_output)
+
+
+def _fill_speed_combo(cmb, config):
+    cmb.addItems(SPEED_LABELS)
+    cmb.setCurrentIndex(speed_index(config.get("encode_speed", "balanced")))
+    cmb.setToolTip("NVENC 预设：p1 最快，p4 日常均衡，p6 偏画质。软编会映射到对应 x264/x265 预设。")
 
 
 def _fix_input_heights(widget):
@@ -928,6 +938,11 @@ class MergeTab(QWidget):
         self.chk_reencode = QCheckBox("编码不一致时重编码合并")
         self.chk_reencode.setChecked(True)
         opt_layout.addWidget(self.chk_reencode)
+        opt_layout.addSpacing(16)
+        opt_layout.addWidget(QLabel("编码速度:"))
+        self.cmb_speed = QComboBox()
+        _fill_speed_combo(self.cmb_speed, self.config)
+        opt_layout.addWidget(self.cmb_speed)
         opt_layout.addStretch()
         o_layout.addLayout(opt_layout)
         self.lbl_status = QLabel("")
@@ -1113,19 +1128,28 @@ class MergeTab(QWidget):
 
         ff = self._get_ff()
         ok, msg, infos = ff.check_compatibility(paths)
+        if not infos:
+            msg_warn(self, "提示", msg or "无法读取文件信息")
+            return
         re_encode = self.chk_reencode.isChecked() and not ok
-        total_duration = sum(info["duration"] for _, info in infos) if infos else 0
-
-        cmd, temp_file = ff.build_merge_command(
-            paths, output, re_encode=re_encode,
+        if not ok and not self.chk_reencode.isChecked():
+            msg_warn(self, "提示", "文件编码不一致。勾选「编码不一致时重编码合并」后再试。")
+            return
+        plan = ff.build_merge_plan(
+            paths, output, infos, re_encode=re_encode,
             codec=self.config.get("default_codec", "hevc_nvenc"),
             use_nvenc=self.config.get("use_nvenc", True),
-            audio_bitrate=self.config.get("default_audio_bitrate", 128)
+            audio_bitrate=self.config.get("default_audio_bitrate", 128),
+            speed=speed_key_at(self.cmb_speed.currentIndex()),
         )
-        self._run_worker(cmd, total_duration, temp_file)
+        self._run_worker(plan)
 
-    def _run_worker(self, cmd, duration, temp_file=None):
-        self.worker = FFmpegWorker(cmd, duration, temp_file)
+    def sync_speed(self, speed):
+        self.cmb_speed.setCurrentIndex(speed_index(speed))
+
+    def _run_worker(self, plan):
+        self.worker = FFmpegWorker(
+            steps=plan["steps"], cleanup=plan.get("cleanup"))
         self.worker.progress.connect(self._on_progress)
         self.worker.log.connect(self._on_log)
         self.worker.finished_signal.connect(self._on_finished)
@@ -1222,7 +1246,11 @@ class CompressTab(QWidget):
         self.cmb_codec.addItems(["HEVC (H.265) NVENC", "H.264 NVENC",
                                   "HEVC (H.265) 软解", "H.264 软解"])
         s_layout.addWidget(self.cmb_codec, 1, 1)
-        s_layout.addWidget(QLabel("目标大小:"), 2, 0)
+        s_layout.addWidget(QLabel("编码速度:"), 2, 0)
+        self.cmb_speed = QComboBox()
+        _fill_speed_combo(self.cmb_speed, self.config)
+        s_layout.addWidget(self.cmb_speed, 2, 1)
+        s_layout.addWidget(QLabel("目标大小:"), 3, 0)
         size_row = QHBoxLayout()
         size_row.setSpacing(8)
         self.cmb_size = QComboBox()
@@ -1239,8 +1267,8 @@ class CompressTab(QWidget):
         size_row.addWidget(self.lbl_custom)
         size_row.addWidget(self.txt_custom)
         size_row.addStretch()
-        s_layout.addLayout(size_row, 2, 1)
-        s_layout.addWidget(QLabel("音频码率:"), 3, 0)
+        s_layout.addLayout(size_row, 3, 1)
+        s_layout.addWidget(QLabel("音频码率:"), 4, 0)
         audio_row = QHBoxLayout()
         self.spn_audio = QSpinBox()
         self.spn_audio.setRange(32, 512)
@@ -1248,7 +1276,7 @@ class CompressTab(QWidget):
         self.spn_audio.setSuffix(" kbps")
         audio_row.addWidget(self.spn_audio)
         audio_row.addStretch()
-        s_layout.addLayout(audio_row, 3, 1)
+        s_layout.addLayout(audio_row, 4, 1)
         s_layout.setColumnStretch(1, 1)
         layout.addWidget(settings_group)
 
@@ -1399,6 +1427,9 @@ class CompressTab(QWidget):
         return [("hevc_nvenc", True), ("h264_nvenc", True),
                 ("hevc", False), ("h264", False)][idx]
 
+    def sync_speed(self, speed):
+        self.cmb_speed.setCurrentIndex(speed_index(speed))
+
     def _start_compress(self):
         input_path = self.txt_input.text().strip()
         if not input_path or not os.path.exists(input_path):
@@ -1422,6 +1453,31 @@ class CompressTab(QWidget):
             return
 
         target_mb = self._get_target_size_mb()
+        src_size = os.path.getsize(input_path)
+        target_bytes = target_mb * 1024 * 1024
+        if src_size <= target_bytes:
+            same_path = os.path.normcase(os.path.abspath(input_path)) == \
+                os.path.normcase(os.path.abspath(output))
+            src_ext = os.path.splitext(input_path)[1].lower()
+            out_ext = os.path.splitext(output)[1].lower()
+            size_txt = FFmpegWrapper.format_size(src_size)
+            if same_path:
+                msg_info(self, "提示",
+                         f"源文件已小于目标大小（{size_txt} ≤ {target_mb} MB），无需压缩")
+                return
+            if src_ext == out_ext:
+                shutil.copy2(input_path, output)
+                msg_info(self, "提示",
+                         f"源文件已小于目标大小（{size_txt} ≤ {target_mb} MB），已直接复制到输出位置")
+                return
+            cmd = [ff_path, "-y", "-i", input_path, "-c", "copy",
+                   "-movflags", "+faststart", output]
+            self.log.clear()
+            self.log.appendPlainText(
+                f"源文件已小于目标大小（{size_txt} ≤ {target_mb} MB），仅封装复制")
+            self._run_worker(cmd, self.file_info["duration"])
+            return
+
         codec, use_nvenc = self._get_codec_info()
         audio_bitrate = self.spn_audio.value()
 
@@ -1433,14 +1489,19 @@ class CompressTab(QWidget):
             input_path, output, target_mb,
             self.file_info["duration"],
             codec=codec, use_nvenc=use_nvenc,
-            audio_bitrate=audio_bitrate
+            audio_bitrate=audio_bitrate,
+            audio_info=self.file_info.get("audio"),
+            video_info=self.file_info.get("video"),
+            speed=speed_key_at(self.cmb_speed.currentIndex()),
         )
 
         self.log.clear()
+        audio_note = "音频 copy" if info.get("audio_copy") else f"音频 {audio_bitrate} kbps"
         self.log.appendPlainText(
             f"目标大小: {target_mb} MB\n"
             f"预计视频码率: {info['video_bitrate']} kbps\n"
-            f"预计总码率: {info['total_bitrate']} kbps"
+            f"预计总码率: {info['total_bitrate']} kbps\n"
+            f"{audio_note}  |  速度: {SPEED_LABELS[self.cmb_speed.currentIndex()]}"
         )
         self._run_worker(cmd, self.file_info["duration"])
 
@@ -1944,9 +2005,13 @@ class WatermarkTab(QWidget):
         self.spn_bitrate.setValue(2000)
         self.spn_bitrate.setSuffix(" kbps")
         g.addWidget(self.spn_bitrate, 2, 3)
+        g.addWidget(QLabel("编码速度:"), 3, 0)
+        self.cmb_speed = QComboBox()
+        _fill_speed_combo(self.cmb_speed, self.config)
+        g.addWidget(self.cmb_speed, 3, 1)
         self.chk_skip = QCheckBox("跳过已加水印的视频（按元数据标记识别）")
         self.chk_skip.setChecked(True)
-        g.addWidget(self.chk_skip, 3, 0, 1, 2)
+        g.addWidget(self.chk_skip, 4, 0, 1, 2)
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addWidget(QLabel("输出方式:"))
@@ -1954,7 +2019,7 @@ class WatermarkTab(QWidget):
         self.cmb_output.addItems(["替换原文件", "另存为新文件"])
         row.addWidget(self.cmb_output)
         row.addStretch()
-        g.addLayout(row, 3, 2, 1, 2)
+        g.addLayout(row, 4, 2, 1, 2)
         g.setColumnStretch(1, 1)
         layout.addWidget(params)
 
@@ -2039,8 +2104,10 @@ class WatermarkTab(QWidget):
         as_new = self.cmb_output.currentIndex() == 1
         jobs = []
         skipped = 0
-        for f in files:
-            probe = probe_video(ffprobe, f)
+        self.log.clear()
+        probes = probe_videos(ffprobe, files)
+        speed = speed_key_at(self.cmb_speed.currentIndex())
+        for f, probe in zip(files, probes):
             if not probe:
                 self.log.appendPlainText(f"✗ 无法读取，跳过: {f}")
                 skipped += 1
@@ -2050,7 +2117,7 @@ class WatermarkTab(QWidget):
                 skipped += 1
                 continue
             temp = suggest_output(f, as_new)
-            cmd, dur = build_command(
+            cmd, dur, extras = build_command(
                 ffmpeg, f, temp, font_path(), probe,
                 text=self.txt_text.text().strip() or "水印",
                 color=self.txt_color.text().strip() or "#FF0000",
@@ -2060,8 +2127,9 @@ class WatermarkTab(QWidget):
                 video_bitrate_k=self.spn_bitrate.value(),
                 codec=self.config.get("default_codec", "hevc_nvenc"),
                 use_nvenc=self.config.get("use_nvenc", True),
+                speed=speed,
             )
-            jobs.append((f, temp, not as_new, cmd, dur))
+            jobs.append((f, temp, not as_new, cmd, dur, extras))
 
         if not jobs:
             msg_info(
@@ -2075,6 +2143,14 @@ class WatermarkTab(QWidget):
                 f"将替换 {len(jobs)} 个原视频文件（不可恢复），是否继续？",
                 QMessageBox.Yes | QMessageBox.No)
             if ret != QMessageBox.Yes:
+                for job in jobs:
+                    extras = job[5] if len(job) > 5 else []
+                    for path in extras:
+                        try:
+                            if path and os.path.exists(path):
+                                os.remove(path)
+                        except Exception:
+                            pass
                 return
 
         self.worker = VideoWatermarkWorker(jobs)
@@ -2088,10 +2164,12 @@ class WatermarkTab(QWidget):
         self.btn_cancel.setVisible(True)
         self.progress.setVisible(True)
         self.progress.setValue(0)
-        self.log.clear()
         self.log.appendPlainText(f"共 {len(jobs)} 个文件待处理"
                                  + (f"，跳过 {skipped} 个" if skipped else ""))
         self.worker.start()
+
+    def sync_speed(self, speed):
+        self.cmb_speed.setCurrentIndex(speed_index(speed))
 
     def _cancel(self):
         if self.worker and self.worker.isRunning():
@@ -2116,6 +2194,7 @@ class WatermarkTab(QWidget):
 # ==================== 设置页签 ====================
 class SettingsTab(QWidget):
     theme_changed = pyqtSignal(str)
+    settings_saved = pyqtSignal()
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -2165,8 +2244,15 @@ class SettingsTab(QWidget):
         self.spn_audio.setValue(128)
         self.spn_audio.setSuffix(" kbps")
         d_layout.addWidget(self.spn_audio, 1, 1)
+        d_layout.addWidget(QLabel("默认编码速度:"), 2, 0)
+        self.cmb_speed = QComboBox()
+        _fill_speed_combo(self.cmb_speed, self.config)
+        d_layout.addWidget(self.cmb_speed, 2, 1)
+        speed_hint = QLabel("最快 p1 / 较快 p3 / 均衡 p4 / 画质 p6，数字越小越快")
+        speed_hint.setObjectName("info")
+        d_layout.addWidget(speed_hint, 3, 0, 1, 2)
         self.chk_nvenc = QCheckBox("默认使用 NVENC 硬件加速")
-        d_layout.addWidget(self.chk_nvenc, 2, 0, 1, 2)
+        d_layout.addWidget(self.chk_nvenc, 4, 0, 1, 2)
         d_layout.setColumnStretch(1, 1)
         layout.addWidget(defaults_group)
 
@@ -2224,6 +2310,8 @@ class SettingsTab(QWidget):
         codec_map = {"hevc_nvenc": 0, "h264_nvenc": 1, "hevc": 2, "h264": 3}
         self.cmb_codec.setCurrentIndex(codec_map.get(codec, 0))
         self.spn_audio.setValue(self.config.get("default_audio_bitrate", 128))
+        self.cmb_speed.setCurrentIndex(
+            speed_index(self.config.get("encode_speed", "balanced")))
         self.chk_nvenc.setChecked(self.config.get("use_nvenc", True))
         self.sync_theme(self.config.get("theme", "light"))
         self._check_nvenc()
@@ -2241,6 +2329,8 @@ class SettingsTab(QWidget):
         self.config.set("default_codec", codec_map.get(self.cmb_codec.currentIndex(), "hevc_nvenc"))
         self.config.set("default_audio_bitrate", self.spn_audio.value())
         self.config.set("use_nvenc", self.chk_nvenc.isChecked())
+        self.config.set("encode_speed", speed_key_at(self.cmb_speed.currentIndex()))
+        self.settings_saved.emit()
         msg_info(self, "成功", "设置已保存")
 
 
@@ -2424,6 +2514,7 @@ class MainWindow(QMainWindow):
         self.nav.page_changed.connect(self.stack.setCurrentIndex)
         self.nav.theme_toggled.connect(self._toggle_theme)
         self.settings_tab.theme_changed.connect(self.set_theme)
+        self.settings_tab.settings_saved.connect(self._sync_encode_speed)
         self.nav.set_theme_label(self._theme)
 
         ff_path = self.config.get("ffmpeg_path", "")
@@ -2437,6 +2528,11 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, lambda: _install_windows_frame_icon(self))
+
+    def _sync_encode_speed(self):
+        speed = self.config.get("encode_speed", "balanced")
+        for tab in (self.merge_tab, self.compress_tab, self.watermark_tab):
+            tab.sync_speed(speed)
 
     def _toggle_theme(self):
         self.set_theme("light" if self._theme == "dark" else "dark")

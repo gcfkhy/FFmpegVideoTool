@@ -7,11 +7,11 @@ set "DEST=ffmpeg_bin"
 set "TMP=%cd%\ffmpeg_tmp"
 set "BIN=%TMP%\bin"
 
-rem 下载源（国内直连优先，失败自动切换）
-set "URL_FFMPEG_CN=https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.1.1/ffmpeg-win32-x64.gz"
-set "URL_FFPROBE_CN=https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.1.1/ffprobe-win32-x64.gz"
+rem 下载源：优先完整 GPL 构建（含 NVENC），ffmpeg-static 阉割版仅作兜底
 set "URL_GYAN=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 set "URL_BTBN=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+set "URL_FFMPEG_CN=https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.1.1/ffmpeg-win32-x64.gz"
+set "URL_FFPROBE_CN=https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.1.1/ffprobe-win32-x64.gz"
 
 echo ========================================
 echo   FFmpeg 自动下载与配置脚本
@@ -37,7 +37,27 @@ if exist "%TMP%" rmdir /s /q "%TMP%"
 mkdir "%BIN%"
 
 echo [1/4] 下载 ffmpeg...
-echo       源1: 国内镜像 npmmirror（无需代理）
+echo       源1: gyan.dev essentials（含 NVENC）
+curl.exe -L --retry 2 --connect-timeout 15 -o "%TMP%\ffmpeg.zip" "%URL_GYAN%"
+if errorlevel 1 (
+    echo       源1 失败，尝试源2: GitHub BtbN GPL...
+    curl.exe -L --retry 2 --connect-timeout 15 -o "%TMP%\ffmpeg.zip" "%URL_BTBN%"
+)
+if exist "%TMP%\ffmpeg.zip" (
+    echo       解压...
+    tar -xf "%TMP%\ffmpeg.zip" -C "%TMP%"
+    if not errorlevel 1 (
+        set "FFM="
+        set "FFP="
+        for /f "delims=" %%f in ('dir /s /b "%TMP%\ffmpeg.exe"') do if not defined FFM set "FFM=%%f"
+        for /f "delims=" %%f in ('dir /s /b "%TMP%\ffprobe.exe"') do if not defined FFP set "FFP=%%f"
+        if defined FFM copy /y "!FFM!" "%BIN%\ffmpeg.exe" >nul
+        if defined FFP copy /y "!FFP!" "%BIN%\ffprobe.exe" >nul
+    )
+)
+if exist "%BIN%\ffmpeg.exe" if exist "%BIN%\ffprobe.exe" goto :unpack_done
+
+echo       完整构建下载失败，尝试源3: ffmpeg-static（功能可能不完整）...
 curl.exe -L --retry 2 --connect-timeout 15 -o "%TMP%\ffmpeg.gz" "%URL_FFMPEG_CN%"
 curl.exe -L --retry 2 --connect-timeout 15 -o "%TMP%\ffprobe.gz" "%URL_FFPROBE_CN%"
 if exist "%TMP%\ffmpeg.gz" if exist "%TMP%\ffprobe.gz" (
@@ -47,45 +67,11 @@ if exist "%TMP%\ffmpeg.gz" if exist "%TMP%\ffprobe.gz" (
 )
 if exist "%BIN%\ffmpeg.exe" if exist "%BIN%\ffprobe.exe" goto :unpack_done
 
-echo       源1 失败，尝试源2: gyan.dev...
-curl.exe -L --retry 2 --connect-timeout 15 -o "%TMP%\ffmpeg.zip" "%URL_GYAN%"
-if errorlevel 1 (
-    echo       源2 失败，尝试源3: GitHub...
-    curl.exe -L --retry 2 --connect-timeout 15 -o "%TMP%\ffmpeg.zip" "%URL_BTBN%"
-)
-if errorlevel 1 (
-    echo.
-    echo [错误] 所有下载源均失败，请检查网络后重试。
-    rmdir /s /q "%TMP%"
-    pause
-    exit /b 1
-)
-echo       解压...
-tar -xf "%TMP%\ffmpeg.zip" -C "%TMP%"
-if errorlevel 1 (
-    echo [错误] 解压失败，文件可能不完整。
-    rmdir /s /q "%TMP%"
-    pause
-    exit /b 1
-)
-set "FFM="
-set "FFP="
-for /f "delims=" %%f in ('dir /s /b "%TMP%\ffmpeg.exe"') do if not defined FFM set "FFM=%%f"
-for /f "delims=" %%f in ('dir /s /b "%TMP%\ffprobe.exe"') do if not defined FFP set "FFP=%%f"
-if defined FFM copy /y "!FFM!" "%BIN%\ffmpeg.exe" >nul
-if defined FFP copy /y "!FFP!" "%BIN%\ffprobe.exe" >nul
-if not exist "%BIN%\ffmpeg.exe" (
-    echo [错误] 压缩包中未找到 ffmpeg.exe。
-    rmdir /s /q "%TMP%"
-    pause
-    exit /b 1
-)
-if not exist "%BIN%\ffprobe.exe" (
-    echo [错误] 压缩包中未找到 ffprobe.exe。
-    rmdir /s /q "%TMP%"
-    pause
-    exit /b 1
-)
+echo.
+echo [错误] 所有下载源均失败，请检查网络后重试。
+rmdir /s /q "%TMP%"
+pause
+exit /b 1
 
 :unpack_done
 echo [2/4] 复制到 ffmpeg_bin...

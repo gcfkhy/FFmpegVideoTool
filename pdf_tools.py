@@ -19,8 +19,12 @@ try:  # 新版 PyMuPDF
     import pymupdf as fitz
 except ImportError:
     import fitz
-from pypdf import PdfReader, PdfWriter
-from pypdf.constants import UserAccessPermissions
+try:
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.constants import UserAccessPermissions
+except ImportError:  # 兼容旧包名 PyPDF2
+    from PyPDF2 import PdfReader, PdfWriter
+    from PyPDF2.constants import UserAccessPermissions
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont

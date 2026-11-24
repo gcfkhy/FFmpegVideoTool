@@ -89,6 +89,7 @@ class Config:
             "default_codec": "hevc_nvenc",
             "default_audio_bitrate": 128,
             "use_nvenc": True,
+            "encode_speed": "balanced",
             "last_output_dir": "",
             "theme": "light",
         }
